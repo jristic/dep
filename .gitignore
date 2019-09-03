@@ -1,0 +1,5 @@
+*.obj
+*.sublime-workspace
+dep.exe
+dep.pdb
+/build/

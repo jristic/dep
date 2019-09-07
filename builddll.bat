@@ -12,4 +12,4 @@ set DllLinkerFlags=/DLL /incremental:no /opt:ref /subsystem:console /libpath:%De
 
 if not exist %BuildFolder%\ mkdir %BuildFolder%
 
-cl.exe /LD %DllCompilerFlags% source\win32_depdll.cpp /link %DllLinkerFlags% /OUT:%BuildFolder%\%ProjectName%win32.dll
+cl.exe /LD %DllCompilerFlags% source\win32_depdll.cpp /link %DllLinkerFlags% /OUT:%ProjectName%win32.dll

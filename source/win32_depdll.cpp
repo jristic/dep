@@ -1,10 +1,27 @@
 #include <windows.h>
+#include <winbase.h>
 #include <utility>
+#include <detours.h>
 
-extern "C" __declspec(dllexport) void testExport() 
+static LONG dwSlept = 0;
+
+// Target pointer for the uninstrumented Sleep API.
+//
+static HANDLE (WINAPI * TrueCreateFileA)(LPCSTR , DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE) = CreateFileA;
+
+// Detour function that replaces the Sleep API.
+//
+HANDLE WINAPI MyCreateFile(
+	LPCSTR                lpFileName,
+  DWORD                 dwDesiredAccess,
+  DWORD                 dwShareMode,
+  LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+  DWORD                 dwCreationDisposition,
+  DWORD                 dwFlagsAndAttributes,
+  HANDLE                hTemplateFile)
 {
-
-	printf("hi from testExport!\n");
+	printf("Intercepting file lpFileName %s! \n", lpFileName);
+    return TrueCreateFileA(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
 }
 
 BOOL WINAPI DllMain(
@@ -17,7 +34,25 @@ BOOL WINAPI DllMain(
 	(void)fdwReason;
 	(void)lpvReserved;
 
-	printf("hi from depwin32.dll!\n");
+	if (DetourIsHelperProcess())
+		return TRUE;
 
-	return true;
+	if (fdwReason == DLL_PROCESS_ATTACH) {
+		printf("hi from depwin32.dll!\n");
+        DetourRestoreAfterWith();
+
+        DetourTransactionBegin();
+        DetourUpdateThread(GetCurrentThread());
+        DetourAttach(&(PVOID&)TrueCreateFileA, MyCreateFile);
+        DetourTransactionCommit();
+    }
+    else if (fdwReason == DLL_PROCESS_DETACH) {
+		printf("goodbye from depwin32.dll! \n");
+        DetourTransactionBegin();
+        DetourUpdateThread(GetCurrentThread());
+        DetourDetach(&(PVOID&)TrueCreateFileA, MyCreateFile);
+        DetourTransactionCommit();
+    }
+
+	return TRUE;
 }

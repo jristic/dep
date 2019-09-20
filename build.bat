@@ -13,4 +13,7 @@ set AdditionalSourceFiles=
 
 if not exist %BuildFolder%\ mkdir %BuildFolder%
 
+setlocal
+call shell x64
 cl.exe %CommonCompilerFlags% source/win32_main.cpp %AdditionalSourceFiles% /Fe%ProjectExe% /link %CommonLinkerFlags%
+endlocal

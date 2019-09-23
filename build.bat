@@ -9,9 +9,9 @@ setlocal
 	set DetoursIncludePath="external\Detours\include"
 	set Detoursx86LibPath="external\Detours\lib.X86"
 	set Detoursx64LibPath="external\Detours\lib.X64"
-	set ExeCompilerFlags=/MTd /nologo /fp:fast /Gm- /GR- /EHa- /Od /Oi /WX /W4 /wd4201 /FC /Z7 /D_CRT_SECURE_NO_WARNINGS /I%DetoursIncludePath% /Fo%BuildFolder%\
+	set ExeCompilerFlags=/MTd /nologo /fp:fast /Gm- /GR- /EHa- /Od /Oi /WX /W4 /wd4201 /FC /Z7 /utf-8 /D_CRT_SECURE_NO_WARNINGS /I%DetoursIncludePath% /Fo%BuildFolder%\
 	set ExeLinkerFlags=/incremental:no /opt:ref /subsystem:console /libpath:%Detoursx64LibPath% detours.lib
-	set DllCompilerFlags=/MTd /nologo /fp:fast /Gm- /GR- /EHa- /Od /Oi /WX /W4 /wd4201 /FC /Z7 /D_CRT_SECURE_NO_WARNINGS /I%DetoursIncludePath% /Fo%BuildFolder%\
+	set DllCompilerFlags=/MTd /nologo /fp:fast /Gm- /GR- /EHa- /Od /Oi /WX /W4 /wd4201 /FC /Z7 /utf-8 /D_CRT_SECURE_NO_WARNINGS /I%DetoursIncludePath% /Fo%BuildFolder%\
 	set DllLinkerFlags=/DLL /incremental:no /opt:ref /subsystem:console /DEF:source\dllexports.def detours.lib 
 	
 

@@ -1,8 +1,8 @@
 *.obj
 *.sublime-workspace
 /build/
-/dep.exe
-/dep.pdb
+/dep*.exe
+/dep*.pdb
 /depwin*.dll
 /depwin*.pdb
 /win32_depdll.exp

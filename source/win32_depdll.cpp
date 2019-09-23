@@ -3,25 +3,43 @@
 #include <utility>
 #include <detours.h>
 
-static LONG dwSlept = 0;
+#if defined(_WIN64)
+const char* dllName = "depwin64.dll";
+#elif defined(_WIN32)
+const char* dllName = "depwin32.dll";
+#else
+	#error
+#endif
 
 // Target pointer for the uninstrumented Sleep API.
 //
-static HANDLE (WINAPI * TrueCreateFileA)(LPCSTR , DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE) = CreateFileA;
+static HANDLE (WINAPI * TrueCreateFileW)(LPCWSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE) = CreateFileW;
+static BOOL (WINAPI * TrueReadFile)(HANDLE, LPVOID, DWORD, LPDWORD, LPOVERLAPPED) = ReadFile;
 
 // Detour function that replaces the Sleep API.
 //
 HANDLE WINAPI MyCreateFile(
-	LPCSTR                lpFileName,
-  DWORD                 dwDesiredAccess,
-  DWORD                 dwShareMode,
-  LPSECURITY_ATTRIBUTES lpSecurityAttributes,
-  DWORD                 dwCreationDisposition,
-  DWORD                 dwFlagsAndAttributes,
-  HANDLE                hTemplateFile)
+	LPCWSTR                lpFileName,
+	DWORD                 dwDesiredAccess,
+	DWORD                 dwShareMode,
+	LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+	DWORD                 dwCreationDisposition,
+	DWORD                 dwFlagsAndAttributes,
+	HANDLE                hTemplateFile)
 {
-	printf("Intercepting file lpFileName %s! \n", lpFileName);
-    return TrueCreateFileA(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+	printf("Intercepting file!\n");
+    return TrueCreateFileW(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+}
+
+BOOL MyReadFile(
+  HANDLE       hFile,
+  LPVOID       lpBuffer,
+  DWORD        nNumberOfBytesToRead,
+  LPDWORD      lpNumberOfBytesRead,
+  LPOVERLAPPED lpOverlapped)
+{
+	printf("Intercepting read!\n");
+	return TrueReadFile(hFile, lpBuffer, nNumberOfBytesToRead, lpNumberOfBytesRead, lpOverlapped);
 }
 
 BOOL WINAPI DllMain(
@@ -38,19 +56,22 @@ BOOL WINAPI DllMain(
 		return TRUE;
 
 	if (fdwReason == DLL_PROCESS_ATTACH) {
-		printf("hi from depwin32.dll!\n");
+
+		printf("hi from %s!\n", dllName);
         DetourRestoreAfterWith();
 
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
-        DetourAttach(&(PVOID&)TrueCreateFileA, MyCreateFile);
+        DetourAttach(&(PVOID&)TrueCreateFileW, MyCreateFile);
+        DetourAttach(&(PVOID&)TrueReadFile, MyReadFile);
         DetourTransactionCommit();
     }
     else if (fdwReason == DLL_PROCESS_DETACH) {
-		printf("goodbye from depwin32.dll! \n");
+		printf("goodbye from %s! \n", dllName);
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
-        DetourDetach(&(PVOID&)TrueCreateFileA, MyCreateFile);
+        DetourDetach(&(PVOID&)TrueCreateFileW, MyCreateFile);
+        DetourDetach(&(PVOID&)TrueReadFile, MyReadFile);
         DetourTransactionCommit();
     }
 

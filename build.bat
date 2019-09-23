@@ -17,17 +17,53 @@ setlocal
 
 	if not exist %BuildFolder%\ mkdir %BuildFolder%
 
+	if "%1" == "exe" goto buildexe
+	if "%1" == "all" goto buildexe
+	goto checkbuilddll
+
+	:buildexe
 	rem Build Exe and 64-bit DLL
 	setlocal
 		call shell x64
 		cl.exe %ExeCompilerFlags% source/win32_main.cpp %AdditionalSourceFiles% /Fe%ProjectExe% /link %ExeLinkerFlags%
-		cl.exe /LD %DllCompilerFlags% source\win32_depdll.cpp /link %DllLinkerFlags% /libpath:%Detoursx64LibPath% /OUT:%ProjectName%win64.dll
 	endlocal
 
+	:checkbuilddll
+
+	if "%1" == "dll" goto builddll
+	if "%1" == "all" goto builddll
+	goto checkbuildsample
+
+	:builddll
+	rem Build 64-bit DLL
+	setlocal
+		call shell x64
+		cl.exe /LD %DllCompilerFlags% source\win32_depdll.cpp /link %DllLinkerFlags% /libpath:%Detoursx64LibPath% /OUT:%ProjectName%win64.dll
+	endlocal
 	rem Build 32-bit DLL
 	setlocal
 		call shell x86
 		cl.exe /LD %DllCompilerFlags% source\win32_depdll.cpp /link %DllLinkerFlags% /libpath:%Detoursx86LibPath% /OUT:%ProjectName%win32.dll
 	endlocal
+
+	:checkbuildsample
+
+	if "%1" == "sample" goto buildsample
+	if "%1" == "all" goto buildsample
+	goto end
+
+	:buildsample
+	rem Build 32-bit sample
+	setlocal
+		call shell x86
+		cl.exe %ExeCompilerFlags% source/win32_sample.cpp %AdditionalSourceFiles% /Fe%ProjectName%sample32.exe /link %ExeLinkerFlags%
+	endlocal
+	rem Build 64-bit sample
+	setlocal
+		call shell x64
+		cl.exe %ExeCompilerFlags% source/win32_sample.cpp %AdditionalSourceFiles% /Fe%ProjectName%sample64.exe /link %ExeLinkerFlags%
+	endlocal
+
+	:end
 
 endlocal

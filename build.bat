@@ -22,10 +22,10 @@ setlocal
 	goto checkbuilddll
 
 	:buildexe
-	rem Build Exe and 64-bit DLL
+	rem Build Exe
 	setlocal
 		call shell x64
-		cl.exe %ExeCompilerFlags% source/win32_main.cpp %AdditionalSourceFiles% /Fe%ProjectExe% /link %ExeLinkerFlags%
+		cl.exe %ExeCompilerFlags% source/win32_main.cpp %AdditionalSourceFiles% /Febuild\%ProjectExe% /link %ExeLinkerFlags%
 	endlocal
 
 	:checkbuilddll
@@ -38,12 +38,12 @@ setlocal
 	rem Build 64-bit DLL
 	setlocal
 		call shell x64
-		cl.exe /LD %DllCompilerFlags% source\win32_depdll.cpp /link %DllLinkerFlags% /libpath:%Detoursx64LibPath% /OUT:%ProjectName%win64.dll
+		cl.exe /LD %DllCompilerFlags% source\win32_depdll.cpp /link %DllLinkerFlags% /libpath:%Detoursx64LibPath% /OUT:build\%ProjectName%64.dll
 	endlocal
 	rem Build 32-bit DLL
 	setlocal
 		call shell x86
-		cl.exe /LD %DllCompilerFlags% source\win32_depdll.cpp /link %DllLinkerFlags% /libpath:%Detoursx86LibPath% /OUT:%ProjectName%win32.dll
+		cl.exe /LD %DllCompilerFlags% source\win32_depdll.cpp /link %DllLinkerFlags% /libpath:%Detoursx86LibPath% /OUT:build\%ProjectName%32.dll
 	endlocal
 
 	:checkbuildsample
@@ -56,12 +56,12 @@ setlocal
 	rem Build 32-bit sample
 	setlocal
 		call shell x86
-		cl.exe %ExeCompilerFlags% source/win32_sample.cpp %AdditionalSourceFiles% /Fe%ProjectName%sample32.exe /link %ExeLinkerFlags%
+		cl.exe %ExeCompilerFlags% source/win32_sample.cpp %AdditionalSourceFiles% /Febuild\%ProjectName%sample32.exe /link %ExeLinkerFlags%
 	endlocal
 	rem Build 64-bit sample
 	setlocal
 		call shell x64
-		cl.exe %ExeCompilerFlags% source/win32_sample.cpp %AdditionalSourceFiles% /Fe%ProjectName%sample64.exe /link %ExeLinkerFlags%
+		cl.exe %ExeCompilerFlags% source/win32_sample.cpp %AdditionalSourceFiles% /Febuild\%ProjectName%sample64.exe /link %ExeLinkerFlags%
 	endlocal
 
 	:end

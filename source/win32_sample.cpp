@@ -6,7 +6,7 @@ int main ()
 	FILE * pFile = fopen ( "input.txt" , "r" );
 	if (pFile == NULL) 
 	{
-		fputs("File error", stderr);
+		fputs("File error\n", stderr);
 		exit(1);
 	}
 
@@ -19,7 +19,7 @@ int main ()
 	char* buffer = (char*) malloc(sizeof(char)*lSize);
 	if (buffer == nullptr)
 	{
-		fputs("Memory error",stderr);
+		fputs("Memory error\n",stderr);
 		exit(2);
 	}
 
@@ -27,7 +27,7 @@ int main ()
 	size_t result = fread(buffer,1,lSize,pFile);
 	if (result != size_t(lSize))
 	{
-		fputs("Reading error",stderr);
+		fputs("Reading error\n",stderr);
 		exit (3);
 	}
 

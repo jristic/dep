@@ -28,24 +28,24 @@ HANDLE WINAPI MyCreateFile(
 	HANDLE                hTemplateFile)
 {
 	printf("Intercepting file!\n");
-    return TrueCreateFileW(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+	return TrueCreateFileW(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
 }
 
 BOOL MyReadFile(
-  HANDLE       hFile,
-  LPVOID       lpBuffer,
-  DWORD        nNumberOfBytesToRead,
-  LPDWORD      lpNumberOfBytesRead,
-  LPOVERLAPPED lpOverlapped)
+	HANDLE       hFile,
+	LPVOID       lpBuffer,
+	DWORD        nNumberOfBytesToRead,
+	LPDWORD      lpNumberOfBytesRead,
+	LPOVERLAPPED lpOverlapped)
 {
 	printf("Intercepting read!\n");
 	return TrueReadFile(hFile, lpBuffer, nNumberOfBytesToRead, lpNumberOfBytesRead, lpOverlapped);
 }
 
 BOOL WINAPI DllMain(
-  _In_ HINSTANCE hinstDLL,
-  _In_ DWORD     fdwReason,
-  _In_ LPVOID    lpvReserved
+	_In_ HINSTANCE hinstDLL,
+	_In_ DWORD     fdwReason,
+	_In_ LPVOID    lpvReserved
 )
 {
 	(void)hinstDLL;
@@ -55,25 +55,24 @@ BOOL WINAPI DllMain(
 	if (DetourIsHelperProcess())
 		return TRUE;
 
-	if (fdwReason == DLL_PROCESS_ATTACH) {
-
+	if (fdwReason == DLL_PROCESS_ATTACH)
+	{
 		printf("hi from %s!\n", dllName);
-        DetourRestoreAfterWith();
+		DetourRestoreAfterWith();
 
-        DetourTransactionBegin();
-        DetourUpdateThread(GetCurrentThread());
-        DetourAttach(&(PVOID&)TrueCreateFileW, MyCreateFile);
-        DetourAttach(&(PVOID&)TrueReadFile, MyReadFile);
-        DetourTransactionCommit();
-    }
-    else if (fdwReason == DLL_PROCESS_DETACH) {
+		DetourTransactionBegin();
+		DetourUpdateThread(GetCurrentThread());
+		DetourAttach(&(PVOID&)TrueCreateFileW, MyCreateFile);
+		DetourAttach(&(PVOID&)TrueReadFile, MyReadFile);
+		DetourTransactionCommit();
+	}
+	else if (fdwReason == DLL_PROCESS_DETACH) {
 		printf("goodbye from %s! \n", dllName);
-        DetourTransactionBegin();
-        DetourUpdateThread(GetCurrentThread());
-        DetourDetach(&(PVOID&)TrueCreateFileW, MyCreateFile);
-        DetourDetach(&(PVOID&)TrueReadFile, MyReadFile);
-        DetourTransactionCommit();
-    }
-
+		DetourTransactionBegin();
+		DetourUpdateThread(GetCurrentThread());
+		DetourDetach(&(PVOID&)TrueCreateFileW, MyCreateFile);
+		DetourDetach(&(PVOID&)TrueReadFile, MyReadFile);
+		DetourTransactionCommit();
+	}
 	return TRUE;
 }

@@ -11,14 +11,16 @@ const char* dllName = "depwin32.dll";
 	#error
 #endif
 
-// Target pointer for the uninstrumented Sleep API.
+//
+// Target pointers for the original functions.
 //
 static HANDLE (WINAPI * TrueCreateFileW)(LPCWSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE) = CreateFileW;
 static BOOL (WINAPI * TrueReadFile)(HANDLE, LPVOID, DWORD, LPDWORD, LPOVERLAPPED) = ReadFile;
+static BOOL (WINAPI * TrueWriteFile)(HANDLE, LPCVOID, DWORD, LPDWORD, LPOVERLAPPED) = WriteFile;
+static HMODULE (WINAPI * TrueLoadLibraryW)(LPCWSTR) = LoadLibraryW;
 
-// Detour function that replaces the Sleep API.
-//
-HANDLE WINAPI MyCreateFile(
+
+HANDLE WINAPI MyCreateFileW(
 	LPCWSTR                lpFileName,
 	DWORD                 dwDesiredAccess,
 	DWORD                 dwShareMode,
@@ -27,11 +29,11 @@ HANDLE WINAPI MyCreateFile(
 	DWORD                 dwFlagsAndAttributes,
 	HANDLE                hTemplateFile)
 {
-	printf("Intercepting file!\n");
+	printf("Intercepting file %ls \n", lpFileName);
 	return TrueCreateFileW(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
 }
 
-BOOL MyReadFile(
+BOOL WINAPI MyReadFile(
 	HANDLE       hFile,
 	LPVOID       lpBuffer,
 	DWORD        nNumberOfBytesToRead,
@@ -40,6 +42,23 @@ BOOL MyReadFile(
 {
 	printf("Intercepting read!\n");
 	return TrueReadFile(hFile, lpBuffer, nNumberOfBytesToRead, lpNumberOfBytesRead, lpOverlapped);
+}
+
+BOOL WINAPI MyWriteFile(
+	HANDLE       hFile,
+	LPCVOID      lpBuffer,
+	DWORD        nNumberOfBytesToWrite,
+	LPDWORD      lpNumberOfBytesWritten,
+	LPOVERLAPPED lpOverlapped)
+{
+	printf("Intercepting write!\n");
+	return TrueWriteFile(hFile, lpBuffer, nNumberOfBytesToWrite, lpNumberOfBytesWritten, lpOverlapped);
+}
+
+HMODULE WINAPI MyLoadLibraryW(LPCWSTR lpLibFileName)
+{
+	printf("Intercepting library %ls \n", lpLibFileName);
+	return TrueLoadLibraryW(lpLibFileName);
 }
 
 BOOL WINAPI DllMain(
@@ -62,16 +81,20 @@ BOOL WINAPI DllMain(
 
 		DetourTransactionBegin();
 		DetourUpdateThread(GetCurrentThread());
-		DetourAttach(&(PVOID&)TrueCreateFileW, MyCreateFile);
+		DetourAttach(&(PVOID&)TrueCreateFileW, MyCreateFileW);
 		DetourAttach(&(PVOID&)TrueReadFile, MyReadFile);
+		DetourAttach(&(PVOID&)TrueWriteFile, MyWriteFile);
+		DetourAttach(&(PVOID&)TrueLoadLibraryW, MyLoadLibraryW);
 		DetourTransactionCommit();
 	}
 	else if (fdwReason == DLL_PROCESS_DETACH) {
 		printf("goodbye from %s! \n", dllName);
 		DetourTransactionBegin();
 		DetourUpdateThread(GetCurrentThread());
-		DetourDetach(&(PVOID&)TrueCreateFileW, MyCreateFile);
+		DetourDetach(&(PVOID&)TrueCreateFileW, MyCreateFileW);
 		DetourDetach(&(PVOID&)TrueReadFile, MyReadFile);
+		DetourDetach(&(PVOID&)TrueWriteFile, WriteFile);
+		DetourDetach(&(PVOID&)TrueLoadLibraryW, MyLoadLibraryW);
 		DetourTransactionCommit();
 	}
 	return TRUE;

@@ -4,6 +4,7 @@
 2. Intercept all the necessary system calls
 	a. start with file open/create/read/write/close
 	b. intercept library loads and other necessities
+	c. intercept sub-process creation
 3. Setup a path where the dep files will be written to.
 	a. start with a hardcoded path
 	b. make it configurage via a dep.cfg that sits in the exe/dll folder

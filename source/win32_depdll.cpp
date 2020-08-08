@@ -15,13 +15,15 @@ const char* dllName = "depwin32.dll";
 // Target pointers for the original functions.
 //
 static HANDLE (WINAPI * TrueCreateFileW)(LPCWSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE) = CreateFileW;
+static HANDLE (WINAPI * TrueCreateFileA)(LPCSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE) = CreateFileA;
 static BOOL (WINAPI * TrueReadFile)(HANDLE, LPVOID, DWORD, LPDWORD, LPOVERLAPPED) = ReadFile;
 static BOOL (WINAPI * TrueWriteFile)(HANDLE, LPCVOID, DWORD, LPDWORD, LPOVERLAPPED) = WriteFile;
 static HMODULE (WINAPI * TrueLoadLibraryW)(LPCWSTR) = LoadLibraryW;
+static HMODULE (WINAPI * TrueLoadLibraryA)(LPCSTR) = LoadLibraryA;
 
 
 HANDLE WINAPI MyCreateFileW(
-	LPCWSTR                lpFileName,
+	LPCWSTR               lpFileName,
 	DWORD                 dwDesiredAccess,
 	DWORD                 dwShareMode,
 	LPSECURITY_ATTRIBUTES lpSecurityAttributes,
@@ -29,8 +31,21 @@ HANDLE WINAPI MyCreateFileW(
 	DWORD                 dwFlagsAndAttributes,
 	HANDLE                hTemplateFile)
 {
-	printf("Intercepting file %ls \n", lpFileName);
+	printf("Intercepting file W %ls \n", lpFileName);
 	return TrueCreateFileW(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+}
+
+HANDLE WINAPI MyCreateFileA(
+	LPCSTR                lpFileName,
+	DWORD                 dwDesiredAccess,
+	DWORD                 dwShareMode,
+	LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+	DWORD                 dwCreationDisposition,
+	DWORD                 dwFlagsAndAttributes,
+	HANDLE                hTemplateFile)
+{
+	printf("Intercepting file A %s \n", lpFileName);
+	return TrueCreateFileA(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
 }
 
 BOOL WINAPI MyReadFile(
@@ -57,8 +72,14 @@ BOOL WINAPI MyWriteFile(
 
 HMODULE WINAPI MyLoadLibraryW(LPCWSTR lpLibFileName)
 {
-	printf("Intercepting library %ls \n", lpLibFileName);
+	printf("Intercepting library W %ls \n", lpLibFileName);
 	return TrueLoadLibraryW(lpLibFileName);
+}
+
+HMODULE WINAPI MyLoadLibraryA(LPCSTR lpLibFileName)
+{
+	printf("Intercepting library A %s \n", lpLibFileName);
+	return TrueLoadLibraryA(lpLibFileName);
 }
 
 BOOL WINAPI DllMain(
@@ -82,9 +103,11 @@ BOOL WINAPI DllMain(
 		DetourTransactionBegin();
 		DetourUpdateThread(GetCurrentThread());
 		DetourAttach(&(PVOID&)TrueCreateFileW, MyCreateFileW);
+		DetourAttach(&(PVOID&)TrueCreateFileA, MyCreateFileA);
 		DetourAttach(&(PVOID&)TrueReadFile, MyReadFile);
 		DetourAttach(&(PVOID&)TrueWriteFile, MyWriteFile);
 		DetourAttach(&(PVOID&)TrueLoadLibraryW, MyLoadLibraryW);
+		DetourAttach(&(PVOID&)TrueLoadLibraryA, MyLoadLibraryA);
 		DetourTransactionCommit();
 	}
 	else if (fdwReason == DLL_PROCESS_DETACH) {
@@ -92,9 +115,11 @@ BOOL WINAPI DllMain(
 		DetourTransactionBegin();
 		DetourUpdateThread(GetCurrentThread());
 		DetourDetach(&(PVOID&)TrueCreateFileW, MyCreateFileW);
+		DetourDetach(&(PVOID&)TrueCreateFileA, MyCreateFileA);
 		DetourDetach(&(PVOID&)TrueReadFile, MyReadFile);
 		DetourDetach(&(PVOID&)TrueWriteFile, WriteFile);
 		DetourDetach(&(PVOID&)TrueLoadLibraryW, MyLoadLibraryW);
+		DetourDetach(&(PVOID&)TrueLoadLibraryA, MyLoadLibraryA);
 		DetourTransactionCommit();
 	}
 	return TRUE;

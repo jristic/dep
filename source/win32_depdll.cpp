@@ -20,7 +20,10 @@ static BOOL (WINAPI * TrueReadFile)(HANDLE, LPVOID, DWORD, LPDWORD, LPOVERLAPPED
 static BOOL (WINAPI * TrueWriteFile)(HANDLE, LPCVOID, DWORD, LPDWORD, LPOVERLAPPED) = WriteFile;
 static HMODULE (WINAPI * TrueLoadLibraryW)(LPCWSTR) = LoadLibraryW;
 static HMODULE (WINAPI * TrueLoadLibraryA)(LPCSTR) = LoadLibraryA;
-
+static BOOL (WINAPI * TrueCreateProcessA)(LPCSTR, LPSTR, LPSECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES,
+	BOOL, DWORD, LPVOID, LPCSTR, LPSTARTUPINFOA, LPPROCESS_INFORMATION) = CreateProcessA;
+static BOOL (WINAPI * TrueCreateProcessW)(LPCWSTR, LPWSTR, LPSECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES,
+	BOOL, DWORD, LPVOID, LPCWSTR, LPSTARTUPINFOW, LPPROCESS_INFORMATION) = CreateProcessW;
 
 HANDLE WINAPI MyCreateFileW(
 	LPCWSTR               lpFileName,
@@ -82,6 +85,44 @@ HMODULE WINAPI MyLoadLibraryA(LPCSTR lpLibFileName)
 	return TrueLoadLibraryA(lpLibFileName);
 }
 
+BOOL WINAPI MyCreateProcessA(
+	LPCSTR                lpApplicationName,
+	LPSTR                 lpCommandLine,
+	LPSECURITY_ATTRIBUTES lpProcessAttributes,
+	LPSECURITY_ATTRIBUTES lpThreadAttributes,
+	BOOL                  bInheritHandles,
+	DWORD                 dwCreationFlags,
+	LPVOID                lpEnvironment,
+	LPCSTR                lpCurrentDirectory,
+	LPSTARTUPINFOA        lpStartupInfo,
+	LPPROCESS_INFORMATION lpProcessInformation)
+{
+	printf("Intercepting create process A %s %s \n", lpApplicationName, lpCommandLine);
+	return TrueCreateProcessA(
+		lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes,
+		bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, 
+		lpStartupInfo, lpProcessInformation);
+}
+
+BOOL WINAPI MyCreateProcessW(
+	LPCWSTR               lpApplicationName,
+	LPWSTR                 lpCommandLine,
+	LPSECURITY_ATTRIBUTES lpProcessAttributes,
+	LPSECURITY_ATTRIBUTES lpThreadAttributes,
+	BOOL                  bInheritHandles,
+	DWORD                 dwCreationFlags,
+	LPVOID                lpEnvironment,
+	LPCWSTR               lpCurrentDirectory,
+	LPSTARTUPINFOW        lpStartupInfo,
+	LPPROCESS_INFORMATION lpProcessInformation)
+{
+	printf("Intercepting create process A %ls %ls \n", lpApplicationName, lpCommandLine);
+	return TrueCreateProcessW(
+		lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes,
+		bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, 
+		lpStartupInfo, lpProcessInformation);
+}
+
 BOOL WINAPI DllMain(
 	_In_ HINSTANCE hinstDLL,
 	_In_ DWORD     fdwReason,
@@ -108,6 +149,8 @@ BOOL WINAPI DllMain(
 		DetourAttach(&(PVOID&)TrueWriteFile, MyWriteFile);
 		DetourAttach(&(PVOID&)TrueLoadLibraryW, MyLoadLibraryW);
 		DetourAttach(&(PVOID&)TrueLoadLibraryA, MyLoadLibraryA);
+		DetourAttach(&(PVOID&)TrueCreateProcessA, MyCreateProcessA);
+		DetourAttach(&(PVOID&)TrueCreateProcessW, MyCreateProcessW);
 		DetourTransactionCommit();
 	}
 	else if (fdwReason == DLL_PROCESS_DETACH) {
@@ -120,6 +163,8 @@ BOOL WINAPI DllMain(
 		DetourDetach(&(PVOID&)TrueWriteFile, WriteFile);
 		DetourDetach(&(PVOID&)TrueLoadLibraryW, MyLoadLibraryW);
 		DetourDetach(&(PVOID&)TrueLoadLibraryA, MyLoadLibraryA);
+		DetourDetach(&(PVOID&)TrueCreateProcessA, MyCreateProcessA);
+		DetourDetach(&(PVOID&)TrueCreateProcessW, MyCreateProcessW);
 		DetourTransactionCommit();
 	}
 	return TRUE;

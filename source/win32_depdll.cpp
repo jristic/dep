@@ -4,9 +4,9 @@
 #include <detours.h>
 
 #if defined(_WIN64)
-const char* dllName = "depwin64.dll";
+const char* dllName = "dep64.dll";
 #elif defined(_WIN32)
-const char* dllName = "depwin32.dll";
+const char* dllName = "dep32.dll";
 #else
 	#error
 #endif
@@ -116,7 +116,7 @@ BOOL WINAPI MyCreateProcessW(
 	LPSTARTUPINFOW        lpStartupInfo,
 	LPPROCESS_INFORMATION lpProcessInformation)
 {
-	printf("Intercepting create process A %ls %ls \n", lpApplicationName, lpCommandLine);
+	printf("Intercepting create process W %ls %ls \n", lpApplicationName, lpCommandLine);
 	return TrueCreateProcessW(
 		lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes,
 		bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, 

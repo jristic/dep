@@ -1,10 +1,22 @@
-1. Clean up the exe code
-	a. Make the dll path not be part of the command line args
-	b. remove the rest of the command args, but leave a framework for the future args dep will take. 
-2. Intercept all the necessary system calls
-	a. start with file open/create/read/write/close
-	b. intercept library loads and other necessities
-	c. intercept sub-process creation
-3. Setup a path where the dep files will be written to.
+1. Setup a path where the dep files will be written to.
 	a. start with a hardcoded path
-	b. make it configurage via a dep.cfg that sits in the exe/dll folder
+		-> use a depcache subfolder in the dep exe/dll folder as a default
+	b. make it configurable via a dep.cfg that sits in the exe/dll folder
+2. Set up a hashing scheme for files and command lines 
+3. Start hashing inputs and write their values out into dep summary files
+	a. Write the output hashes as well. 
+4. Store output results for each given overall input hash.
+5. Skip execution step and copy stored results if input hash matches previously compiled one
+6. ...
+7. Profit?
+
+
+Next steps:
+	1. Implement depwatcher
+		-> have a persistent shared system process which caches hash results for large/all files?
+		-> reduce the amount of time spent re-hashing often used or large files
+	2. Dep build cache
+		-> have a dep server that dep users can pass up their build results so other users can resuse their results instead of having to build everything the first time
+	3. Distribute dep work 
+		-> If depwatcher sees that the build cache 
+		-> not sure if this is feasible?

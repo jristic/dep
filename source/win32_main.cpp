@@ -8,6 +8,45 @@
 #include <strsafe.h>
 #pragma warning(pop)
 
+void SPrint(char* buf, int buf_size, const char *str, ...)
+{
+	va_list ptr;
+	va_start(ptr,str);
+	vsprintf_s(buf,buf_size,str,ptr);
+	va_end(ptr);
+}
+
+#define Assert(expression, message, ...) 				\
+	do { 												\
+		__pragma(warning(suppress:4127))				\
+		if (!(expression)) {							\
+			char __buf[512];							\
+			SPrint(__buf, 512,							\
+				"/* ---- Assert ---- */ \n"				\
+				"LOCATION:  %s@%d		\n"				\
+				"CONDITION:  %s			\n"				\
+				"MESSAGE: " message "	\n",			\
+				__FILE__, __LINE__, 					\
+				#expression,							\
+				##__VA_ARGS__);							\
+			if (IsDebuggerPresent())					\
+			{											\
+				OutputDebugString(__buf);				\
+				DebugBreak();							\
+			}											\
+			else										\
+			{											\
+				MessageBoxA(NULL, 						\
+					__buf,								\
+					"Assert Failed", 					\
+					MB_ICONERROR | MB_OK);				\
+				exit(-1);								\
+			}											\
+		}												\
+	__pragma(warning(suppress:4127))					\
+	} while (0);										\
+
+
 //////////////////////////////////////////////////////////////////////////////
 //
 void PrintUsage(void)
@@ -390,16 +429,35 @@ int CDECL main(int argc, char **argv)
 		return 9001;
 	}
 
-	char* DllName = "dep64.dll";
 
-	CHAR DllPath[1024];
-	PCHAR FilePart = NULL;
+	char DepExePath[2048];
+	CHAR DllPath[2048];
 
-	if (!GetFullPathNameA(DllName, ARRAYSIZE(DllPath), DllPath, &FilePart))
+	// Establish the full path to the current exe
 	{
-		printf("dep.exe: Error: %s is not a valid path name..\n",
-			DllName);
-		return 9002;
+		int copiedSize = GetModuleFileName(nullptr, DepExePath, ARRAYSIZE(DepExePath));
+		if (copiedSize == 0)
+		{
+			printf("dep.exe: Error: failed to get dep exe path. \n");
+			return 9002;
+		}
+		else if (copiedSize == ARRAYSIZE(DepExePath) && GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+		{
+			printf("dep.exe: Error: buffer too short for dep exe path. \n");
+			return 9002;
+		}
+	}
+	// Establish the full path to the DLL
+	{
+		char* DllName = "dep64.dll";
+		size_t DllNameLength = strlen(DllName);
+		memcpy(DllPath, DepExePath, sizeof(DepExePath));
+		size_t index = strlen(DllPath) - 1;
+		while (DllPath[index] != '\\')
+			--index;
+		++index; // now index is pointing to the first character of "dep.exe"
+		Assert(index + DllNameLength - strlen("dep.exe") < ARRAYSIZE(DllPath), "buffer too short");
+		memcpy(&DllPath[index], DllName, DllNameLength+1);
 	}
 
 	if (Verbose)
@@ -495,6 +553,8 @@ int CDECL main(int argc, char **argv)
 		printf("dep.exe: GetExitCodeProcess failed: %d\n", GetLastError());
 		return 9010;
 	}
+
+	printf("dep.exe: Process exited with return value %d\n", dwResult);
 
 	return dwResult;
 }

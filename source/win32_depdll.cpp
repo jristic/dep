@@ -139,6 +139,8 @@ BOOL WINAPI DllMain(
 	if (fdwReason == DLL_PROCESS_ATTACH)
 	{
 		printf("hi from %s!\n", dllName);
+		// LPSTR commandLine = GetCommandLine();
+		// printf("command line: %s\n", commandLine);
 		DetourRestoreAfterWith();
 
 		DetourTransactionBegin();

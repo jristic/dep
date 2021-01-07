@@ -11,6 +11,7 @@
 5. Skip execution step and copy stored results if input hash matches previously compiled one
 6. Tools for maintaining how much space is being consumed by the dep cache. 
 	-> maybe should live in depwatcher? other option is to check the usage of the cache with every invocation of dep, but this could be a lengthy process for a large cache
+		-> or just create a separate utility, more work than depwatcher option but reasonable if depwatcher hasn't been implemented and this is high priority
 	-> touch the cache file every time it's used for the result of an operation so we can do a least-recently-used eviction system
 7. ...
 8. Profit?

@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string>
 #include <windows.h>
 #include <detours.h>
 #pragma warning(push)
@@ -396,14 +397,7 @@ int CDECL main(int argc, char **argv)
 	int arg = 1;
 	for ( ; arg < argc && (argv[arg][0] == '-' || argv[arg][0] == '/'); arg++)
 	{
-		char *argn = argv[arg] + 1;
-		char *argp = argn;
-		while (*argp && *argp != ':' && *argp != '=')
-			argp++;
-		if (*argp == ':' || *argp == '=')
-			*argp++ = '\0';
-
-		switch (argn[0])
+		switch (argv[arg][1])
 		{
 			case 'v':                                     // Verbose
 			case 'V':
@@ -421,7 +415,7 @@ int CDECL main(int argc, char **argv)
 		}
 	}
 
-	if (argc == 1)
+	if (argc == 1 || arg == argc)
 		NeedHelp = true;
 
 	if (NeedHelp) {
@@ -430,43 +424,40 @@ int CDECL main(int argc, char **argv)
 	}
 
 
-	char DepExePath[2048];
-	CHAR DllPath[2048];
-
+	std::string DepExePath;
+	std::string DllPath;
 	// Establish the full path to the current exe
 	{
-		int copiedSize = GetModuleFileName(nullptr, DepExePath, ARRAYSIZE(DepExePath));
+		char PathBuffer[2048];
+		int copiedSize = GetModuleFileName(nullptr, PathBuffer, ARRAYSIZE(PathBuffer));
 		if (copiedSize == 0)
 		{
 			printf("dep.exe: Error: failed to get dep exe path. \n");
 			return 9002;
 		}
-		else if (copiedSize == ARRAYSIZE(DepExePath) && GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+		else if (copiedSize == ARRAYSIZE(PathBuffer) && GetLastError() == ERROR_INSUFFICIENT_BUFFER)
 		{
 			printf("dep.exe: Error: buffer too short for dep exe path. \n");
 			return 9002;
 		}
+		DepExePath = PathBuffer;
 	}
 	// Establish the full path to the DLL
 	{
 		char* DllName = "dep64.dll";
-		size_t DllNameLength = strlen(DllName);
-		memcpy(DllPath, DepExePath, sizeof(DepExePath));
-		size_t index = strlen(DllPath) - 1;
-		while (DllPath[index] != '\\')
-			--index;
-		++index; // now index is pointing to the first character of "dep.exe"
-		Assert(index + DllNameLength - strlen("dep.exe") < ARRAYSIZE(DllPath), "buffer too short");
-		memcpy(&DllPath[index], DllName, DllNameLength+1);
+		char* ExeName = "dep.exe";
+		size_t exePos = DepExePath.rfind(ExeName);
+		Assert(exePos != std::string::npos, "Could not find exe path in string %s", DepExePath.c_str());
+		DllPath = DepExePath.substr(0, exePos) + DllName;
 	}
 
 	if (Verbose)
 	{
-		HMODULE hDll = LoadLibraryExA(DllPath, NULL, DONT_RESOLVE_DLL_REFERENCES);
+		HMODULE hDll = LoadLibraryExA(DllPath.c_str(), NULL, DONT_RESOLVE_DLL_REFERENCES);
 		if (hDll == NULL)
 		{
 			printf("dep.exe: Error: %s failed to load (error %d).\n",
-				DllPath,
+				DllPath.c_str(),
 				GetLastError());
 			return 9003;
 		}
@@ -480,7 +471,7 @@ int CDECL main(int argc, char **argv)
 		if (!ec.HasOrdinal1)
 		{
 			printf("dep.exe: Error: %s does not export ordinal #1.\n",
-				DllPath);
+				DllPath.c_str());
 			printf("             See help entry DetourCreateProcessWithDllEx in Detours.chm.\n");
 			return 9004;
 		}
@@ -516,12 +507,12 @@ int CDECL main(int argc, char **argv)
 		}
 	}
 	printf("dep.exe: Starting: `%s'\n", szCommand);
-	printf("dep.exe:   with `%s'\n", DllPath);
+	printf("dep.exe:   with `%s'\n", DllPath.c_str());
 	fflush(stdout);
 
 	DWORD dwFlags = CREATE_DEFAULT_ERROR_MODE | CREATE_SUSPENDED;
 
-	LPCSTR pszDllPath = DllPath;
+	LPCSTR pszDllPath = DllPath.c_str();
 
 	SetLastError(0);
 	SearchPathA(NULL, szExe, ".exe", ARRAYSIZE(szFullExe), szFullExe, &pszFileExe);

@@ -23,9 +23,9 @@ local VSLib64Path=""..VSInstallPath.."/ATLMFC/lib/x64;"..VSInstallPath.."/lib/x6
 local DetoursIncludePath="external/Detours/include"
 local Detoursx86LibPath="external/Detours/lib.X86"
 local Detoursx64LibPath="external/Detours/lib.X64"
-local ExeCompilerFlags="/MTd /nologo /fp:fast /Gm- /GR- /EHa- /Od /Oi /WX /W4 /wd4201 /FC /Z7 /utf-8 /D_CRT_SECURE_NO_WARNINGS /I"..DetoursIncludePath.." /Fo"..BuildFolder.."/"
+local ExeCompilerFlags="/MTd /nologo /fp:fast /Gm- /GR- /EHsc /Od /Oi /WX /W4 /wd4201 /FC /Z7 /utf-8 /D_CRT_SECURE_NO_WARNINGS /I"..DetoursIncludePath.." /Fo"..BuildFolder.."/"
 local ExeLinkerFlags="/incremental:no /opt:ref /subsystem:console /libpath:"..Detoursx64LibPath.." detours.lib User32.lib"
-local DllCompilerFlags="/MTd /nologo /fp:fast /Gm- /GR- /EHa- /Od /Oi /WX /W4 /wd4201 /FC /Z7 /utf-8 /D_CRT_SECURE_NO_WARNINGS /I"..DetoursIncludePath.." /Fo"..BuildFolder.."/"
+local DllCompilerFlags="/MTd /nologo /fp:fast /Gm- /GR- /EHsc /Od /Oi /WX /W4 /wd4201 /FC /Z7 /utf-8 /D_CRT_SECURE_NO_WARNINGS /I"..DetoursIncludePath.." /Fo"..BuildFolder.."/"
 local DllLinkerFlags="/DLL /incremental:no /opt:ref /subsystem:console /DEF:source/dllexports.def detours.lib"
 	
 local targets = { "exe", "dll", "sample" }

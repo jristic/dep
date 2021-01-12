@@ -1,4 +1,5 @@
-#include <stdio.h>
+#include "depcommon.h"
+
 #include <string>
 #include <windows.h>
 #include <detours.h>
@@ -8,45 +9,6 @@
 #endif
 #include <strsafe.h>
 #pragma warning(pop)
-
-void SPrint(char* buf, int buf_size, const char *str, ...)
-{
-	va_list ptr;
-	va_start(ptr,str);
-	vsprintf_s(buf,buf_size,str,ptr);
-	va_end(ptr);
-}
-
-#define Assert(expression, message, ...) 				\
-	do { 												\
-		__pragma(warning(suppress:4127))				\
-		if (!(expression)) {							\
-			char __buf[512];							\
-			SPrint(__buf, 512,							\
-				"/* ---- Assert ---- */ \n"				\
-				"LOCATION:  %s@%d		\n"				\
-				"CONDITION:  %s			\n"				\
-				"MESSAGE: " message "	\n",			\
-				__FILE__, __LINE__, 					\
-				#expression,							\
-				##__VA_ARGS__);							\
-			if (IsDebuggerPresent())					\
-			{											\
-				OutputDebugString(__buf);				\
-				DebugBreak();							\
-			}											\
-			else										\
-			{											\
-				MessageBoxA(NULL, 						\
-					__buf,								\
-					"Assert Failed", 					\
-					MB_ICONERROR | MB_OK);				\
-				exit(-1);								\
-			}											\
-		}												\
-	__pragma(warning(suppress:4127))					\
-	} while (0);										\
-
 
 //////////////////////////////////////////////////////////////////////////////
 //
@@ -424,9 +386,12 @@ int CDECL main(int argc, char **argv)
 	}
 
 
+	char* ExeName = "dep.exe";
+	char* DllName = "dep64.dll";
 	std::string DepExePath;
+	std::string DirectoryPath;
 	std::string DllPath;
-	// Establish the full path to the current exe
+	// Establish the full path to the current exe, it's path, adn the dll path
 	{
 		char PathBuffer[2048];
 		int copiedSize = GetModuleFileName(nullptr, PathBuffer, ARRAYSIZE(PathBuffer));
@@ -441,14 +406,11 @@ int CDECL main(int argc, char **argv)
 			return 9002;
 		}
 		DepExePath = PathBuffer;
-	}
-	// Establish the full path to the DLL
-	{
-		char* DllName = "dep64.dll";
-		char* ExeName = "dep.exe";
+
 		size_t exePos = DepExePath.rfind(ExeName);
 		Assert(exePos != std::string::npos, "Could not find exe path in string %s", DepExePath.c_str());
-		DllPath = DepExePath.substr(0, exePos) + DllName;
+		DirectoryPath = DepExePath.substr(0, exePos);
+		DllPath = DirectoryPath + DllName;
 	}
 
 	if (Verbose)
@@ -474,6 +436,17 @@ int CDECL main(int argc, char **argv)
 				DllPath.c_str());
 			printf("             See help entry DetourCreateProcessWithDllEx in Detours.chm.\n");
 			return 9004;
+		}
+	}
+
+	// create the dep cache directory if it doesn't already exist
+	{
+		std::string DepCachePath = DirectoryPath + "depcache";
+		BOOL success = CreateDirectory(DepCachePath.c_str(), nullptr);
+		if (!success)
+		{
+			DWORD lastError = GetLastError();
+			Assert(lastError == ERROR_ALREADY_EXISTS, "failed to create directory, error=%d", lastError);
 		}
 	}
 

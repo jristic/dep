@@ -2,9 +2,14 @@
 #include <stdlib.h>
 #include <windows.h>
 
-int main ()
+int main(int argc, char* argv[])
 {
-	FILE * pFile = fopen ( "input.txt" , "r" );
+	if (argc != 2)
+	{
+		fputs("Invalid number of args\n", stderr);
+		exit(1);
+	}
+	FILE * pFile = fopen ( argv[1] , "r" );
 	if (pFile == NULL) 
 	{
 		fputs("File error\n", stderr);

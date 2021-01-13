@@ -32,19 +32,14 @@ static BOOL (WINAPI * TrueCreateProcessA)(LPCSTR, LPSTR, LPSECURITY_ATTRIBUTES, 
 static BOOL (WINAPI * TrueCreateProcessW)(LPCWSTR, LPWSTR, LPSECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES,
 	BOOL, DWORD, LPVOID, LPCWSTR, LPSTARTUPINFOW, LPPROCESS_INFORMATION) = CreateProcessW;
 
+
+static char LogBuffer[2048];
 void WriteToLog(const char* string)
 {
-	printf("test: %s \n", string);
-	// if (LogFileHandle != INVALID_HANDLE_VALUE)
-	{ 
-		DWORD bytesWritten;
-		BOOL result = TrueWriteFile(LogFileHandle, string, (DWORD)strlen(string), &bytesWritten, nullptr);
-		Assert(result, "Failed to write file, last error = %d", GetLastError());
-	}
-	// else
-	// {
-	// 	printf(string);
-	// }
+	Assert(LogFileHandle != INVALID_HANDLE_VALUE, "Log file wasn't created yet?");
+	DWORD bytesWritten;
+	BOOL result = TrueWriteFile(LogFileHandle, string, (DWORD)strlen(string), &bytesWritten, nullptr);
+	Assert(result, "Failed to write file, last error = %d", GetLastError());
 }
 
 HANDLE WINAPI MyCreateFileW(
@@ -192,6 +187,10 @@ BOOL WINAPI DllMain(
 
 	if (fdwReason == DLL_PROCESS_ATTACH)
 	{
+		// For debugging
+		//while( !::IsDebuggerPresent() )
+		//	::Sleep( 100 ); // to avoid 100% CPU load
+		
 		DllDetoursAttach();
 
 		HMODULE hm = NULL;
@@ -219,7 +218,6 @@ BOOL WINAPI DllMain(
 		size_t dllPos = DllPath.rfind(DllName);
 		Assert(dllPos != std::string::npos, "Could not find dll name in string %s", DllPath.c_str());
 		std::string DirectoryPath = DllPath.substr(0, dllPos);
-		printf("directoryPath %s\n", DirectoryPath.c_str());
 
 		std::string DepCachePath = DirectoryPath + "depcache\\";
 
@@ -229,8 +227,7 @@ BOOL WINAPI DllMain(
 		char buffer[64];
 		snprintf(buffer, sizeof(buffer), "%d_%.2d_%.2d__%.2d_%.2d_%.2d.log", time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond);
 		std::string logFilePath = DepCachePath + buffer;
-		printf("logFilePath %s\n", logFilePath.c_str());
-
+		
 		LogFileHandle = TrueCreateFileA(logFilePath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
 		Assert(LogFileHandle != INVALID_HANDLE_VALUE, "Failed to create file %s", logFilePath.c_str());
 
@@ -238,7 +235,6 @@ BOOL WINAPI DllMain(
 
 		LPSTR commandLine = GetCommandLine();
 		WriteToLog(commandLine);
-
 	}
 	else if (fdwReason == DLL_PROCESS_DETACH)
 	{

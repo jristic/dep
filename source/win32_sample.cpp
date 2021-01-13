@@ -4,7 +4,7 @@
 
 int main(int argc, char* argv[])
 {
-	if (argc != 2)
+	if (argc != 3)
 	{
 		fputs("Invalid number of args\n", stderr);
 		exit(1);
@@ -41,13 +41,14 @@ int main(int argc, char* argv[])
 	// terminate
 	fclose(pFile);
 
-	pFile = fopen("output.txt", "w");
+	pFile = fopen(argv[2], "w");
 	if (pFile!=NULL)
 	{
 		fputs("fopen example:\n", pFile);
 		fwrite(buffer, 1, lSize, pFile);
 		fclose(pFile);
 	}
+	free(buffer);
 
 	STARTUPINFO si;
     PROCESS_INFORMATION pi;
@@ -73,6 +74,13 @@ int main(int argc, char* argv[])
         exit(4);
     }
 
-	free(buffer);
-	return 0;
+    WaitForSingleObject(pi.hProcess, INFINITE);
+
+	DWORD dwResult = 0;
+	if (!GetExitCodeProcess(pi.hProcess, &dwResult)) {
+		printf("dep.exe: GetExitCodeProcess failed: %d\n", GetLastError());
+		exit(5);
+	}
+
+	return dwResult;
 }

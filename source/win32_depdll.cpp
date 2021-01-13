@@ -224,11 +224,23 @@ BOOL WINAPI DllMain(
 		SYSTEMTIME time;
 		GetLocalTime(&time);
 
-		char buffer[64];
-		snprintf(buffer, sizeof(buffer), "%d_%.2d_%.2d__%.2d_%.2d_%.2d.log", time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond);
-		std::string logFilePath = DepCachePath + buffer;
+		char tmpBuffer[128];
+		snprintf(tmpBuffer, sizeof(tmpBuffer), "%d_%.2d_%.2d__%.2d_%.2d_%.2d.log", time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond);
+		std::string logFilePath = DepCachePath + tmpBuffer;
 		
-		LogFileHandle = TrueCreateFileA(logFilePath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+		LogFileHandle = TrueCreateFileA(logFilePath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+		if (LogFileHandle == INVALID_HANDLE_VALUE)
+		{ 
+			int iteration = 1;
+			while (LogFileHandle == INVALID_HANDLE_VALUE && 
+				GetLastError() == ERROR_ALREADY_EXISTS)
+			{
+				snprintf(tmpBuffer, sizeof(tmpBuffer), "%d_%.2d_%.2d__%.2d_%.2d_%.2d__%d.log", time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond, iteration);
+				logFilePath = DepCachePath + tmpBuffer;
+				LogFileHandle = TrueCreateFileA(logFilePath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+				++iteration;
+			}
+		}
 		Assert(LogFileHandle != INVALID_HANDLE_VALUE, "Failed to create file %s", logFilePath.c_str());
 
 		WriteToLog(DllName);

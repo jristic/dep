@@ -21,7 +21,10 @@
 
 
 TODOs:
-1. make things like dep cache location configurable via a dep.cfg that sits in the exe/dll folder
+1. Make the lua script handle build failure
+2. Support batch file extension? ie. "dep build" for build.bat
+3. make things like dep cache location configurable via a dep.cfg that sits in the exe/dll folder
+4. Add the ability to ignore certain files or file types via dep.cfg
 
 
 Potential next steps:

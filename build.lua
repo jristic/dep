@@ -2,10 +2,14 @@ local lfs = require("lfs")
 local winapi = require("winapi")
 
 local ProjectName = "dep"
-local ProjectPath = arg[0]:match("(.*[/\\])")
 local ProjectExe = ProjectName .. ".exe"
+local ProjectPath = arg[1]
+table.remove(arg, 1)
 
-local BuildFolder="build"
+-- guard against the build script being executed from a different working directory
+lfs.chdir(ProjectPath) 
+
+local BuildFolder="built"
 
 local VSInstallPath = "C:/Program Files (x86)/Microsoft Visual Studio/2017/Community/VC/Tools/MSVC/14.16.27023"
 
@@ -23,16 +27,14 @@ local VSLib64Path=""..VSInstallPath.."/ATLMFC/lib/x64;"..VSInstallPath.."/lib/x6
 local DetoursIncludePath="external/Detours/include"
 local Detoursx86LibPath="external/Detours/lib.X86"
 local Detoursx64LibPath="external/Detours/lib.X64"
-local ExeCompilerFlags="/MTd /nologo /fp:fast /Gm- /GR- /EHsc /Od /Oi /WX /W4 /wd4201 /FC /Z7 /utf-8 /D_CRT_SECURE_NO_WARNINGS /I"..DetoursIncludePath.." /Fo"..BuildFolder.."/"
+local ExeCompilerFlags="/MTd /nologo /fp:fast /Gm- /GR- /EHsc /Od /Oi /WX /W4 /wd4201 /FC /Z7 /utf-8 /D_CRT_SECURE_NO_WARNINGS /I"..DetoursIncludePath.." /Fo"..BuildFolder.."\\"
 local ExeLinkerFlags="/incremental:no /opt:ref /subsystem:console /libpath:"..Detoursx64LibPath.." detours.lib User32.lib"
-local DllCompilerFlags="/MTd /nologo /fp:fast /Gm- /GR- /EHsc /Od /Oi /WX /W4 /wd4201 /FC /Z7 /utf-8 /D_CRT_SECURE_NO_WARNINGS /I"..DetoursIncludePath.." /Fo"..BuildFolder.."/"
-local DllLinkerFlags="/DLL /incremental:no /opt:ref /subsystem:console /DEF:source/dllexports.def detours.lib User32.lib"
+local DllCompilerFlags="/MTd /nologo /fp:fast /Gm- /GR- /EHsc /Od /Oi /WX /W4 /wd4201 /FC /Z7 /utf-8 /D_CRT_SECURE_NO_WARNINGS /I"..DetoursIncludePath.." /Fo"..BuildFolder.."\\"
+local DllLinkerFlags="/DLL /incremental:no /opt:ref /subsystem:console /DEF:source\\dllexports.def detours.lib User32.lib"
 	
 local targets = { "exe", "dll", "sample" }
 local chosenTargets = {}
 
--- guard against the build script being executed from a different working directory
-lfs.chdir(ProjectPath) 
 
 local function ShellExecute(command)
 	print(command)
@@ -69,11 +71,11 @@ for _,config in ipairs(bitness) do
 	for _,target in ipairs(chosenTargets) do
 		-- we have no need of a 32bit launcher exe
 		if target == "exe" and config == "x64" then
-			ShellExecute(compiler..' '..ExeCompilerFlags.." source/win32_main.cpp /Febuild/"..ProjectExe.." /link "..ExeLinkerFlags .. " /machine:"..config)
+			ShellExecute(compiler..' '..ExeCompilerFlags.." source\\win32_main.cpp /Fe"..BuildFolder.."\\"..ProjectExe.." /link "..ExeLinkerFlags .. " /machine:"..config)
 		elseif target == "dll" then
-			ShellExecute(compiler..' /LD '..DllCompilerFlags.." source/win32_depdll.cpp /link "..DllLinkerFlags.." /libpath:"..detoursLibPath.." /OUT:build/"..ProjectName..bitName..".dll")
+			ShellExecute(compiler..' /LD '..DllCompilerFlags.." source\\win32_depdll.cpp /link "..DllLinkerFlags.." /libpath:"..detoursLibPath.." /OUT:"..BuildFolder.."\\"..ProjectName..bitName..".dll")
 		elseif target == "sample" then
-			ShellExecute(compiler..' '..ExeCompilerFlags.." source/win32_sample.cpp /Febuild/"..ProjectName.."sample"..bitName..".exe /link "..ExeLinkerFlags.." /machine:"..config)
+			ShellExecute(compiler..' '..ExeCompilerFlags.." source\\win32_sample.cpp /Fe"..BuildFolder.."\\"..ProjectName.."sample"..bitName..".exe /link "..ExeLinkerFlags.." /machine:"..config)
 		end
 	end
 end

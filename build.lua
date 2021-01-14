@@ -32,7 +32,7 @@ local ExeLinkerFlags="/incremental:no /opt:ref /subsystem:console /libpath:"..De
 local DllCompilerFlags="/MTd /nologo /fp:fast /Gm- /GR- /EHsc /Od /Oi /WX /W4 /wd4201 /FC /Z7 /utf-8 /D_CRT_SECURE_NO_WARNINGS /I"..DetoursIncludePath.." /Fo"..BuildFolder.."\\"
 local DllLinkerFlags="/DLL /incremental:no /opt:ref /subsystem:console /DEF:source\\dllexports.def detours.lib User32.lib"
 	
-local targets = { "exe", "dll", "sample" }
+local targets = { "exe", "dll", "sample", "copysample" }
 local chosenTargets = {}
 
 
@@ -76,6 +76,8 @@ for _,config in ipairs(bitness) do
 			ShellExecute(compiler..' /LD '..DllCompilerFlags.." source\\win32_depdll.cpp /link "..DllLinkerFlags.." /libpath:"..detoursLibPath.." /OUT:"..BuildFolder.."\\"..ProjectName..bitName..".dll")
 		elseif target == "sample" then
 			ShellExecute(compiler..' '..ExeCompilerFlags.." source\\win32_sample.cpp /Fe"..BuildFolder.."\\"..ProjectName.."sample"..bitName..".exe /link "..ExeLinkerFlags.." /machine:"..config)
+		elseif target == "copysample" then
+			ShellExecute(compiler..' '..ExeCompilerFlags.." source\\win32_copysample.cpp /Fe"..BuildFolder.."\\".."copysample"..bitName..".exe /link "..ExeLinkerFlags.." /machine:"..config)
 		end
 	end
 end

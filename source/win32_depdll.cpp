@@ -34,11 +34,17 @@ static BOOL (WINAPI * TrueCreateProcessW)(LPCWSTR, LPWSTR, LPSECURITY_ATTRIBUTES
 
 
 static char LogBuffer[2048];
-void WriteToLog(const char* string)
+void WriteToLog(const char *format, ...)
 {
 	Assert(LogFileHandle != INVALID_HANDLE_VALUE, "Log file wasn't created yet?");
+
+	va_list ptr;
+	va_start(ptr,format);
+	vsprintf_s(LogBuffer, sizeof(LogBuffer), format, ptr);
+	va_end(ptr);
+
 	DWORD bytesWritten;
-	BOOL result = TrueWriteFile(LogFileHandle, string, (DWORD)strlen(string), &bytesWritten, nullptr);
+	BOOL result = TrueWriteFile(LogFileHandle, LogBuffer, (DWORD)strlen(LogBuffer), &bytesWritten, nullptr);
 	Assert(result, "Failed to write file, last error = %d", GetLastError());
 }
 
@@ -51,7 +57,7 @@ HANDLE WINAPI MyCreateFileW(
 	DWORD                 dwFlagsAndAttributes,
 	HANDLE                hTemplateFile)
 {
-	printf("Intercepting file W %ls \n", lpFileName);
+	WriteToLog("Intercepting file W %ls \n", lpFileName);
 	return TrueCreateFileW(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
 }
 
@@ -64,7 +70,7 @@ HANDLE WINAPI MyCreateFileA(
 	DWORD                 dwFlagsAndAttributes,
 	HANDLE                hTemplateFile)
 {
-	printf("Intercepting file A %s \n", lpFileName);
+	WriteToLog("Intercepting file A %s \n", lpFileName);
 	return TrueCreateFileA(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
 }
 
@@ -92,13 +98,13 @@ BOOL WINAPI MyWriteFile(
 
 HMODULE WINAPI MyLoadLibraryW(LPCWSTR lpLibFileName)
 {
-	printf("Intercepting library W %ls \n", lpLibFileName);
+	WriteToLog("Intercepting library W %ls \n", lpLibFileName);
 	return TrueLoadLibraryW(lpLibFileName);
 }
 
 HMODULE WINAPI MyLoadLibraryA(LPCSTR lpLibFileName)
 {
-	printf("Intercepting library A %s \n", lpLibFileName);
+	WriteToLog("Intercepting library A %s \n", lpLibFileName);
 	return TrueLoadLibraryA(lpLibFileName);
 }
 
@@ -114,7 +120,7 @@ BOOL WINAPI MyCreateProcessA(
 	LPSTARTUPINFOA        lpStartupInfo,
 	LPPROCESS_INFORMATION lpProcessInformation)
 {
-	printf("Intercepting create process A %s %s \n", lpApplicationName, lpCommandLine);
+	WriteToLog("Intercepting create process A %s %s \n", lpApplicationName, lpCommandLine);
 	return TrueCreateProcessA(
 		lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes,
 		bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, 
@@ -133,7 +139,7 @@ BOOL WINAPI MyCreateProcessW(
 	LPSTARTUPINFOW        lpStartupInfo,
 	LPPROCESS_INFORMATION lpProcessInformation)
 {
-	printf("Intercepting create process W %ls %ls \n", lpApplicationName, lpCommandLine);
+	WriteToLog("Intercepting create process W %ls %ls \n", lpApplicationName, lpCommandLine);
 	return TrueCreateProcessW(
 		lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes,
 		bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, 
@@ -191,8 +197,6 @@ BOOL WINAPI DllMain(
 		//while( !::IsDebuggerPresent() )
 		//	::Sleep( 100 ); // to avoid 100% CPU load
 		
-		DllDetoursAttach();
-
 		HMODULE hm = NULL;
 		if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | 
 		        GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -232,8 +236,9 @@ BOOL WINAPI DllMain(
 		if (LogFileHandle == INVALID_HANDLE_VALUE)
 		{ 
 			int iteration = 1;
+			DWORD lastError = GetLastError();
 			while (LogFileHandle == INVALID_HANDLE_VALUE && 
-				GetLastError() == ERROR_ALREADY_EXISTS)
+				lastError == ERROR_FILE_EXISTS)
 			{
 				snprintf(tmpBuffer, sizeof(tmpBuffer), "%d_%.2d_%.2d__%.2d_%.2d_%.2d__%d.log", time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond, iteration);
 				logFilePath = DepCachePath + tmpBuffer;
@@ -243,10 +248,10 @@ BOOL WINAPI DllMain(
 		}
 		Assert(LogFileHandle != INVALID_HANDLE_VALUE, "Failed to create file %s", logFilePath.c_str());
 
-		WriteToLog(DllName);
-
 		LPSTR commandLine = GetCommandLine();
-		WriteToLog(commandLine);
+		WriteToLog("Invocation: Dll=%s commandLine=%s \n", DllPath.c_str(), commandLine);
+
+		DllDetoursAttach();
 	}
 	else if (fdwReason == DLL_PROCESS_DETACH)
 	{

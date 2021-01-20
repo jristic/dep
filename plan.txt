@@ -1,23 +1,16 @@
-1. Setup a path where the dep files will be written to.
-	a. start with a hardcoded path
-		-> use a depcache subfolder in the dep exe/dll folder as a default
-		-> initially, write out a log file for each invocation with info about the invocation
-			-> need to generate a unique file name from the date, if one already exists add a subscript (for instance from multiple invocatitons in the same second)
-	b. in the dep exe, create the dep cache folder if it's not there
-2. Set up a hashing scheme for files and command lines 
-3. Start hashing inputs and write their values out into dep summary files
+1. Start hashing inputs and write their values out into dep summary files
 	a. Write the output hashes as well. 
-4. Store output results for each given overall input hash.
-5. Skip execution step and copy stored results if input hash matches previously compiled one
-6. Handle subprocess creation
+2. Store output results for each given overall input hash.
+3. Skip execution step and copy stored results if input hash matches previously compiled one
+4. Handle subprocess creation
 	-> basically what we do in the dep exe needs to happen from within the dll as well, recursively setting up itself within the next child
 	-> would it be easier/better to handle each sub-process as a separate dep invocation, or recursively combine children into the parent to create a single invocation with all the inputs/outputs in one big set?
-7. Tools for maintaining how much space is being consumed by the dep cache. 
+5. Tools for maintaining how much space is being consumed by the dep cache. 
 	-> maybe should live in depwatcher? other option is to check the usage of the cache with every invocation of dep, but this could be a lengthy process for a large cache
 		-> or just create a separate utility, more work than depwatcher option but reasonable if depwatcher hasn't been implemented and this is high priority
 	-> touch the cache file every time it's used for the result of an operation so we can do a least-recently-used eviction system
-8. ...
-9. Profit?
+6. ...
+7. Profit?
 
 
 TODOs:
@@ -25,6 +18,7 @@ TODOs:
 2. Support batch file extension? ie. "dep build" for build.bat
 3. make things like dep cache location configurable via a dep.cfg that sits in the exe/dll folder
 4. Add the ability to ignore certain files or file types via dep.cfg
+5. Add some debug ability to check for hash collisions. 
 
 
 Potential next steps:

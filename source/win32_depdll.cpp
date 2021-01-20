@@ -6,6 +6,9 @@
 #include <detours.h>
 #include <string>
 
+// Source files
+#include "md5.cpp"
+
 #if defined(_WIN64)
 const char* DllName = "dep64.dll";
 #elif defined(_WIN32)

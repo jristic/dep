@@ -1,3 +1,3 @@
 @echo off
-rem It's necessary to use the full path to the script so that we know our absolute path.
+rem Pass in the build script directory as it is the project root directory. 
 lua build.lua %~dp0 %*

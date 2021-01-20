@@ -1,6 +1,17 @@
 # dep
 Dep is an automatic dependency checking utility for Windows. 
+
 Dep works by having you pass the command you want executed through it, which it creates for you while injecting a DLL into the created process that tracks all files used as input to and output from the process. If the outputs are already up-to-date given the current state of the inputs, Dep skips invoking the command. 
+
+## What dep DOES work with
+* Programs that take input from files and the command line and write output to other files. 
+
+## What dep DOESN'T work with
+* Programs that use a single file as both input and output. 
+* Programs that can't be invoked from the command line.
+* Programs that use sources like the system clock, the network, or inter-process communication.
+* Programs that have non-deterministic output based on their inputs. 
+* Programs whose output depends on scanning directories or the existence of files. 
 
 ## Prerequisites for building
 1. A Visual Studio 2017 installation (Community edition will work).

@@ -1,9 +1,9 @@
-namespace md5 {
-
 // ***************************************************************
 // This work is derived from the RSA Data Security, Inc. MD5 
 //  Message-Digest Algorithm
 // ***************************************************************
+
+namespace md5 {
 
 /*
 	INTERFACE

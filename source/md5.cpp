@@ -19,6 +19,7 @@ struct Digest {
 };
 
 Digest ComputeDigest(unsigned char* data, size_t length);
+std::string DigestToString(Digest* digest);
 void Init(Context *);
 void Update(Context *, unsigned char *, size_t);
 void Final(Digest*, Context *);
@@ -98,6 +99,18 @@ Digest ComputeDigest(unsigned char* data, size_t length)
 	Update(&context, data, length);
 	Final(&digest, &context);
 	return digest;
+}
+
+std::string DigestToString(Digest* digest)
+{
+	char buf[32+1]; // sprintf always adds a newline
+	unsigned char* b = digest->bytes;
+	snprintf(buf, sizeof(buf),
+		"%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n",
+		b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+		b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]);
+	std::string s(buf);
+	return s;
 }
 
 void Init(Context *context)

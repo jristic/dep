@@ -1,3 +1,11 @@
+#pragma warning(push)
+#if _MSC_VER > 1400
+#pragma warning(disable:6102 6103) // /analyze warnings
+#endif
+#include <strsafe.h>
+#pragma warning(pop)
+
+
 //////////////////////////////////////////////////////////////////////////////
 //
 //  This code verifies that the named DLL has been configured correctly

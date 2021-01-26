@@ -76,7 +76,7 @@ for _,config in ipairs(bitness) do
 			ShellExecute(compiler..' /LD '..DllCompilerFlags.." source\\win32_depdll.cpp /Fe"..BuildFolder.."\\"..ProjectName..bitName..".dll /link "..DllLinkerFlags.." /libpath:"..detoursLibPath)
 		elseif target == "sample" then
 			ShellExecute(compiler..' '..ExeCompilerFlags.." source\\win32_sample.cpp /Fe"..BuildFolder.."\\"..ProjectName.."sample"..bitName..".exe /link "..ExeLinkerFlags.." /machine:"..config)
-		elseif target == "copysample" then
+		elseif target == "depcopysample" then
 			ShellExecute(compiler..' '..ExeCompilerFlags.." source\\win32_copysample.cpp /Fe"..BuildFolder.."\\".."depcopysample"..bitName..".exe /link "..ExeLinkerFlags.." /machine:"..config)
 		end
 	end

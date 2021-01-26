@@ -3,12 +3,6 @@
 #include <string>
 #include <windows.h>
 #include <detours.h>
-#pragma warning(push)
-#if _MSC_VER > 1400
-#pragma warning(disable:6102 6103) // /analyze warnings
-#endif
-#include <strsafe.h>
-#pragma warning(pop)
 
 // Source files
 #include "win32_processutils.cpp"
@@ -21,8 +15,9 @@ void PrintUsage(void)
 	printf("Usage:\n"
 		   "    dep.exe [options] [command line]\n"
 		   "Options:\n"
-		   "    /v            : Verbose, display memory at start.\n"
-		   "    /?            : This help screen.\n");
+		   "	/f 				: Force, perform the command even if up to date."
+		   "    /v 				: Verbose, display memory at start.\n"
+		   "    /?				: This help screen.\n");
 }
 
 //////////////////////////////////////////////////////////////////////// main.
@@ -31,6 +26,7 @@ int CDECL main(int argc, char **argv)
 {
 	bool NeedHelp = false;
 	bool Verbose = false;
+	bool Force = false;
 
 	int arg = 1;
 	for ( ; arg < argc && (argv[arg][0] == '-' || argv[arg][0] == '/'); arg++)
@@ -39,15 +35,17 @@ int CDECL main(int argc, char **argv)
 		{
 			case 'v':                                     // Verbose
 			case 'V':
-				Verbose = TRUE;
+				Verbose = true;
 				break;
-
+			case 'f':                                     // Force
+			case 'F':
+				Force = true;
+				break;
 			case '?':                                     // Help
-				NeedHelp = TRUE;
+				NeedHelp = true;
 				break;
-
 			default:
-				NeedHelp = TRUE;
+				NeedHelp = true;
 				printf("dep.exe: Bad argument: %s\n", argv[arg]);
 				break;
 		}
@@ -67,7 +65,7 @@ int CDECL main(int argc, char **argv)
 	std::string DepExePath;
 	std::string DirectoryPath;
 	std::string DllPath;
-	// Establish the full path to the current exe, it's path, adn the dll path
+	// Establish the full path to the current exe, its directory, and the dll path
 	{
 		char PathBuffer[2048];
 		int copiedSize = GetModuleFileName(nullptr, PathBuffer, ARRAYSIZE(PathBuffer));
@@ -155,8 +153,13 @@ int CDECL main(int argc, char **argv)
 			StringCchCatA(szCommand, sizeof(szCommand), " ");
 		}
 	}
-	printf("dep.exe: Starting: `%s'\n", szCommand);
-	printf("dep.exe:   with `%s'\n", DllPath.c_str());
+
+	// TODO: the hash needs to include the full path to the exe/bat being used.
+	md5::Digest digest = md5::ComputeDigest((unsigned char*)szCommand, strlen(szCommand));
+	std::string subFolder = md5::DigestToString(&digest);
+
+	printf("dep.exe: Starting: '%s', md5=%s\n", szCommand, subFolder.c_str());
+	//printf("dep.exe:   with `%s'\n", DllPath.c_str());
 	fflush(stdout);
 
 	DWORD dwFlags = CREATE_DEFAULT_ERROR_MODE | CREATE_SUSPENDED;
@@ -167,7 +170,8 @@ int CDECL main(int argc, char **argv)
 	SearchPathA(NULL, szExe, ".exe", ARRAYSIZE(szFullExe), szFullExe, &pszFileExe);
 	if (!DetourCreateProcessWithDllsA(szFullExe[0] ? szFullExe : NULL, szCommand,
 									 NULL, NULL, TRUE, dwFlags, NULL, NULL,
-									 &si, &pi, 1, &pszDllPath, NULL)) {
+									 &si, &pi, 1, &pszDllPath, NULL))
+	{
 		DWORD dwError = GetLastError();
 		printf("dep.exe: DetourCreateProcessWithDllEx failed: %d\n", dwError);
 		if (dwError == ERROR_INVALID_HANDLE) {

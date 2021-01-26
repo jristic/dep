@@ -38,6 +38,6 @@ void SPrint(char* buf, int buf_size, const char *str, ...)
 				exit(-1);								\
 			}											\
 		}												\
-	__pragma(warning(default:4127))						\
+		__pragma(warning(default:4127))					\
 	} while (0);										\
 

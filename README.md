@@ -3,8 +3,12 @@ Dep is an automatic dependency checking utility for Windows.
 
 Dep works by having you pass the command you want executed through it, which it creates for you while injecting a DLL into the created process that tracks all files used as input to and output from the process. If the outputs are already up-to-date given the current state of the inputs, Dep skips invoking the command. 
 
+## Recommended Usage
+Dep is intended for use in situations where execution time for a process is high relative to the size of the inputs and outputs (eg shader compilation). If your process uses inputs that are many megabytes or even gigabytes in size, then the time spent having to compute a hash for those inputs will likely eat up any time saved not executing the process. 
+
 ## What dep DOES work with
 * Programs that take input from files and the command line and write output to other files. 
+* Programs that create sub-processes, so long as they also meet all these criteria. 
 
 ## What dep DOESN'T work with
 * Programs that use a single file as both input and output. 

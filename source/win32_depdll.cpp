@@ -47,7 +47,8 @@ void WriteToLog(const char *format, ...)
 	va_end(ptr);
 
 	DWORD bytesWritten;
-	BOOL result = TrueWriteFile(LogFileHandle, LogBuffer, (DWORD)strlen(LogBuffer), &bytesWritten, nullptr);
+	BOOL result = TrueWriteFile(LogFileHandle, LogBuffer, (DWORD)strlen(LogBuffer),
+		&bytesWritten, nullptr);
 	Assert(result, "Failed to write file, last error = %d", GetLastError());
 }
 
@@ -60,8 +61,50 @@ HANDLE WINAPI MyCreateFileW(
 	DWORD                 dwFlagsAndAttributes,
 	HANDLE                hTemplateFile)
 {
-	WriteToLog("Intercepting file W %ls \n", lpFileName);
-	return TrueCreateFileW(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+	HANDLE handle = TrueCreateFileW(lpFileName, dwDesiredAccess, dwShareMode,
+		lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+	DWORD errorToPreserve = GetLastError();
+
+	// TODO: early out if create file failed
+	// TODO: check that dwDesiredAccess isn't both read AND write
+	// TODO: check that this file wasn't previously opened with a different dwDesiredAccess
+	// TODO: differentiate based on input/output usage
+
+	md5::Context md5Ctx;
+	md5::Digest digest;
+	md5::Init(&md5Ctx);
+
+	uint32_t readSize = 4*1024*1024; // 4 MB
+	unsigned char* mem = (unsigned char*)malloc(readSize);
+	uint32_t bytesRead = 0;
+
+	LARGE_INTEGER large;
+	BOOL success = GetFileSizeEx(handle, &large);
+	Assert(success, "Failed to get file size, error=%d", GetLastError());
+	Assert(large.QuadPart < UINT_MAX, "File is too large, not supported");
+	uint32_t bytesToRead = large.LowPart;
+
+	while (bytesRead < bytesToRead)
+	{
+		OVERLAPPED ovr = {};
+		ovr.Offset = bytesRead;
+		DWORD bytesReadThisIteration;
+		success = TrueReadFile(handle, mem, min(bytesToRead, readSize), 
+			&bytesReadThisIteration, &ovr);
+		Assert(success, "Failed to read file, error=%d", GetLastError());
+		bytesRead += bytesReadThisIteration;
+		md5::Update(&md5Ctx, mem, bytesReadThisIteration);
+	}
+
+	md5::Final(&digest, &md5Ctx);
+	std::string hash = md5::DigestToString(&digest);
+
+	free(mem);
+
+	WriteToLog("Intercepting file W %ls, hash=%s \n", lpFileName, hash.c_str());
+
+	SetLastError(errorToPreserve);
+	return handle;
 }
 
 HANDLE WINAPI MyCreateFileA(
@@ -74,7 +117,8 @@ HANDLE WINAPI MyCreateFileA(
 	HANDLE                hTemplateFile)
 {
 	WriteToLog("Intercepting file A %s \n", lpFileName);
-	return TrueCreateFileA(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+	return TrueCreateFileA(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes,
+		dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
 }
 
 BOOL WINAPI MyReadFile(
@@ -85,7 +129,8 @@ BOOL WINAPI MyReadFile(
 	LPOVERLAPPED lpOverlapped)
 {
 	WriteToLog("Intercepting read!\n");
-	return TrueReadFile(hFile, lpBuffer, nNumberOfBytesToRead, lpNumberOfBytesRead, lpOverlapped);
+	return TrueReadFile(hFile, lpBuffer, nNumberOfBytesToRead, lpNumberOfBytesRead,
+		lpOverlapped);
 }
 
 BOOL WINAPI MyWriteFile(
@@ -96,7 +141,8 @@ BOOL WINAPI MyWriteFile(
 	LPOVERLAPPED lpOverlapped)
 {
 	WriteToLog("Intercepting write!\n");
-	return TrueWriteFile(hFile, lpBuffer, nNumberOfBytesToWrite, lpNumberOfBytesWritten, lpOverlapped);
+	return TrueWriteFile(hFile, lpBuffer, nNumberOfBytesToWrite,
+		lpNumberOfBytesWritten, lpOverlapped);
 }
 
 HMODULE WINAPI MyLoadLibraryW(LPCWSTR lpLibFileName)
@@ -215,7 +261,8 @@ BOOL WINAPI DllMain(
 		{
 			Assert(false, "depdll: Error: failed to get dep dll path. \n");
 		}
-		else if (copiedSize == ARRAYSIZE(PathBuffer) && GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+		else if (copiedSize == ARRAYSIZE(PathBuffer) &&
+			GetLastError() == ERROR_INSUFFICIENT_BUFFER)
 		{
 			Assert(false, "depdll: Error: buffer too short for dep dll path. \n");
 		}
@@ -223,7 +270,8 @@ BOOL WINAPI DllMain(
 		std::string DllPath = PathBuffer;
 
 		size_t dllPos = DllPath.rfind(DllName);
-		Assert(dllPos != std::string::npos, "Could not find dll name in string %s", DllPath.c_str());
+		Assert(dllPos != std::string::npos, "Could not find dll name in string %s",
+			DllPath.c_str());
 		std::string DirectoryPath = DllPath.substr(0, dllPos);
 
 		std::string DepCachePath = DirectoryPath + "depcache\\";
@@ -232,10 +280,12 @@ BOOL WINAPI DllMain(
 		GetLocalTime(&time);
 
 		char tmpBuffer[128];
-		snprintf(tmpBuffer, sizeof(tmpBuffer), "%d_%.2d_%.2d__%.2d_%.2d_%.2d.log", time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond);
+		snprintf(tmpBuffer, sizeof(tmpBuffer), "%d_%.2d_%.2d__%.2d_%.2d_%.2d.log",
+			time.wYear,	time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond);
 		std::string logFilePath = DepCachePath + tmpBuffer;
 		
-		LogFileHandle = TrueCreateFileA(logFilePath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+		LogFileHandle = TrueCreateFileA(logFilePath.c_str(), GENERIC_WRITE, 0,
+			nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
 		if (LogFileHandle == INVALID_HANDLE_VALUE)
 		{ 
 			int iteration = 1;
@@ -243,13 +293,17 @@ BOOL WINAPI DllMain(
 			while (LogFileHandle == INVALID_HANDLE_VALUE && 
 				lastError == ERROR_FILE_EXISTS)
 			{
-				snprintf(tmpBuffer, sizeof(tmpBuffer), "%d_%.2d_%.2d__%.2d_%.2d_%.2d__%d.log", time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond, iteration);
+				snprintf(tmpBuffer, sizeof(tmpBuffer), "%d_%.2d_%.2d__%.2d_%.2d_%.2d__%d.log",
+					time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond,
+					iteration);
 				logFilePath = DepCachePath + tmpBuffer;
-				LogFileHandle = TrueCreateFileA(logFilePath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+				LogFileHandle = TrueCreateFileA(logFilePath.c_str(), GENERIC_WRITE, 0, nullptr,
+					CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
 				++iteration;
 			}
 		}
-		Assert(LogFileHandle != INVALID_HANDLE_VALUE, "Failed to create file %s", logFilePath.c_str());
+		Assert(LogFileHandle != INVALID_HANDLE_VALUE, "Failed to create file %s",
+			logFilePath.c_str());
 
 		LPSTR commandLine = GetCommandLine();
 		WriteToLog("Invocation: Dll=%s commandLine=%s \n", DllPath.c_str(), commandLine);
@@ -259,6 +313,10 @@ BOOL WINAPI DllMain(
 	else if (fdwReason == DLL_PROCESS_DETACH)
 	{
 		DllDetoursDetach();
+
+		// Write out .dep file containing results for given inputs
+		// TODO: Mark failure during course of execution (ie. if too large file 
+		// 	was used, or read+write permission) and invalidate the results here if so. 
 
 		CloseHandle(LogFileHandle);
 	}

@@ -13,11 +13,11 @@
 void PrintUsage(void)
 {
 	printf("Usage:\n"
-		   "    dep.exe [options] [command line]\n"
+		   "	dep.exe [options] [command line]\n"
 		   "Options:\n"
-		   "	/f 				: Force, perform the command even if up to date."
-		   "    /v 				: Verbose, display memory at start.\n"
-		   "    /?				: This help screen.\n");
+		   "	/f		: Force, perform the command even if up to date.\n"
+		   "	/v		: Verbose, display memory at start.\n"
+		   "	/?		: This help screen.\n");
 }
 
 //////////////////////////////////////////////////////////////////////// main.
@@ -139,22 +139,16 @@ int CDECL main(int argc, char **argv)
 	szCommand[0] = L'\0';
 
 	StringCchCopyA(szExe, sizeof(szExe), argv[arg]);
-	for (; arg < argc; arg++) {
-		if (strchr(argv[arg], ' ') != NULL || strchr(argv[arg], '\t') != NULL) {
-			StringCchCatA(szCommand, sizeof(szCommand), "\"");
-			StringCchCatA(szCommand, sizeof(szCommand), argv[arg]);
-			StringCchCatA(szCommand, sizeof(szCommand), "\"");
-		}
-		else {
-			StringCchCatA(szCommand, sizeof(szCommand), argv[arg]);
-		}
-
+	for (; arg < argc; arg++)
+	{
+		StringCchCatA(szCommand, sizeof(szCommand), argv[arg]);
 		if (arg + 1 < argc) {
 			StringCchCatA(szCommand, sizeof(szCommand), " ");
 		}
 	}
 
-	// TODO: the hash needs to include the full path to the exe/bat being used.
+	// TODO: the hash needs to include the full path to the exe/bat being used,
+	//	the contents of the exe, and the current working directory.
 	md5::Digest digest = md5::ComputeDigest((unsigned char*)szCommand, strlen(szCommand));
 	std::string subFolder = md5::DigestToString(&digest);
 

@@ -5,6 +5,9 @@
 #include <utility>
 #include <detours.h>
 #include <string>
+#include <mutex>
+#include <map>
+#include <set>
 
 // Source files
 #include "md5.cpp"
@@ -20,6 +23,13 @@ const char* DllName = "dep32.dll";
 static void DummyDllIdentifier() { return; }
 
 HANDLE LogFileHandle = INVALID_HANDLE_VALUE;
+bool DepSuccess = true;
+
+std::mutex DepInputLock;
+std::map<std::string, md5::Digest> DepInputHashes;
+
+std::mutex DepOutputLock;
+std::set<std::string> DepOutputs;
 
 //
 // Target pointers for the original functions.
@@ -36,10 +46,10 @@ static BOOL (WINAPI * TrueCreateProcessW)(LPCWSTR, LPWSTR, LPSECURITY_ATTRIBUTES
 	BOOL, DWORD, LPVOID, LPCWSTR, LPSTARTUPINFOW, LPPROCESS_INFORMATION) = CreateProcessW;
 
 
-static char LogBuffer[2048];
 void WriteToLog(const char *format, ...)
 {
 	Assert(LogFileHandle != INVALID_HANDLE_VALUE, "Log file wasn't created yet?");
+	char LogBuffer[2048];
 
 	va_list ptr;
 	va_start(ptr,format);
@@ -50,6 +60,61 @@ void WriteToLog(const char *format, ...)
 	BOOL result = TrueWriteFile(LogFileHandle, LogBuffer, (DWORD)strlen(LogBuffer),
 		&bytesWritten, nullptr);
 	Assert(result, "Failed to write file, last error = %d", GetLastError());
+}
+
+void ProcessInputFile(std::string& fileName, HANDLE handle)
+{
+	// check if we already have this file
+	bool checkFile = true;
+	{
+		const std::lock_guard<std::mutex> lock(DepInputLock);
+		if (DepInputHashes.find(fileName) != DepInputHashes.end())
+		{
+			WriteToLog("Repeated file open for %s, skipping \n", fileName.c_str());
+			checkFile = false;
+		}
+	}
+
+	if (checkFile)
+	{
+		md5::Context md5Ctx;
+		md5::Digest digest;
+		md5::Init(&md5Ctx);
+
+		uint32_t readSize = 4*1024*1024; // 4 MB
+		unsigned char* mem = (unsigned char*)malloc(readSize);
+		uint32_t bytesRead = 0;
+
+		LARGE_INTEGER large;
+		BOOL success = GetFileSizeEx(handle, &large);
+		Assert(success, "Failed to get file size, error=%d", GetLastError());
+		Assert(large.QuadPart < UINT_MAX, "File is too large, not supported");
+		uint32_t bytesToRead = large.LowPart;
+
+		while (bytesRead < bytesToRead)
+		{
+			OVERLAPPED ovr = {};
+			ovr.Offset = bytesRead;
+			DWORD bytesReadThisIteration;
+			success = TrueReadFile(handle, mem, min(bytesToRead, readSize), 
+				&bytesReadThisIteration, &ovr);
+			Assert(success, "Failed to read file, error=%d", GetLastError());
+			bytesRead += bytesReadThisIteration;
+			md5::Update(&md5Ctx, mem, bytesReadThisIteration);
+		}
+
+		md5::Final(&digest, &md5Ctx);
+		std::string hash = md5::DigestToString(&digest);
+		WriteToLog("Intercepting fileW (input) %s, hash=%s \n", fileName.c_str(), 
+			hash.c_str() );
+
+		{
+			const std::lock_guard<std::mutex> lock(DepInputLock);
+			DepInputHashes[fileName] = digest;
+		}
+
+		free(mem);
+	}
 }
 
 HANDLE WINAPI MyCreateFileW(
@@ -65,43 +130,48 @@ HANDLE WINAPI MyCreateFileW(
 		lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
 	DWORD errorToPreserve = GetLastError();
 
-	// TODO: early out if create file failed
-	// TODO: check that dwDesiredAccess isn't both read AND write
-	// TODO: check that this file wasn't previously opened with a different dwDesiredAccess
-	// TODO: differentiate based on input/output usage
-
-	md5::Context md5Ctx;
-	md5::Digest digest;
-	md5::Init(&md5Ctx);
-
-	uint32_t readSize = 4*1024*1024; // 4 MB
-	unsigned char* mem = (unsigned char*)malloc(readSize);
-	uint32_t bytesRead = 0;
-
-	LARGE_INTEGER large;
-	BOOL success = GetFileSizeEx(handle, &large);
-	Assert(success, "Failed to get file size, error=%d", GetLastError());
-	Assert(large.QuadPart < UINT_MAX, "File is too large, not supported");
-	uint32_t bytesToRead = large.LowPart;
-
-	while (bytesRead < bytesToRead)
+	// Early out if create file failed - this is a valid flow. Don't track it. 
+	if (handle == INVALID_HANDLE_VALUE)
 	{
-		OVERLAPPED ovr = {};
-		ovr.Offset = bytesRead;
-		DWORD bytesReadThisIteration;
-		success = TrueReadFile(handle, mem, min(bytesToRead, readSize), 
-			&bytesReadThisIteration, &ovr);
-		Assert(success, "Failed to read file, error=%d", GetLastError());
-		bytesRead += bytesReadThisIteration;
-		md5::Update(&md5Ctx, mem, bytesReadThisIteration);
+		WriteToLog("Failed to open file %ls \n", lpFileName);
+		SetLastError(errorToPreserve);
+		return handle;
 	}
 
-	md5::Final(&digest, &md5Ctx);
-	std::string hash = md5::DigestToString(&digest);
+	// Check that dwDesiredAccess isn't both read AND write - this is not valid. 
+	if ((dwDesiredAccess & GENERIC_READ) != 0 && (dwDesiredAccess & GENERIC_WRITE) != 0)
+	{
+		WriteToLog("File opened with both read and write, this is not valid usage - %ls \n",
+			lpFileName);
+		DepSuccess = false;
+		SetLastError(errorToPreserve);
+		return handle;
+	}
 
-	free(mem);
+	// TODO: check that this file wasn't previously opened with a different dwDesiredAccess
 
-	WriteToLog("Intercepting file W %ls, hash=%s \n", lpFileName, hash.c_str());
+	// Convert to a regular char string
+	std::string fileName;
+	{
+		size_t mblen = (wcslen(lpFileName)+1)*2;
+		char* mbstr = (char*)malloc(mblen);
+		size_t convertedSize = 0;
+		int result = wcstombs_s(&convertedSize, mbstr, mblen, lpFileName, mblen);
+		Assert(result == 0, "Failed to convert string %ls, wcstombs_s errno=%d", 
+			lpFileName, result);
+		fileName = mbstr;
+	}
+
+	if ((dwDesiredAccess & GENERIC_READ) != 0)
+	{
+		ProcessInputFile(fileName, handle);
+	}
+	else if ((dwDesiredAccess & GENERIC_WRITE) != 0)
+	{
+		const std::lock_guard<std::mutex> lock(DepOutputLock);
+		DepOutputs.insert(fileName);
+		WriteToLog("Intercepting fileW (output) %s \n", fileName.c_str());
+	}
 
 	SetLastError(errorToPreserve);
 	return handle;
@@ -116,22 +186,59 @@ HANDLE WINAPI MyCreateFileA(
 	DWORD                 dwFlagsAndAttributes,
 	HANDLE                hTemplateFile)
 {
-	WriteToLog("Intercepting file A %s \n", lpFileName);
-	return TrueCreateFileA(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes,
+	WriteToLog("Intercepting fileA %s \n", lpFileName);
+	HANDLE handle = TrueCreateFileA(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes,
 		dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+	DWORD errorToPreserve = GetLastError();
+
+	// Early out if create file failed - this is a valid flow. Don't track it. 
+	if (handle == INVALID_HANDLE_VALUE)
+	{
+		WriteToLog("Failed to open file %s \n", lpFileName);
+		SetLastError(errorToPreserve);
+		return handle;
+	}
+
+	// Check that dwDesiredAccess isn't both read AND write - this is not valid. 
+	if ((dwDesiredAccess & GENERIC_READ) != 0 && (dwDesiredAccess & GENERIC_WRITE) != 0)
+	{
+		WriteToLog("File opened with both read and write, this is not valid usage - %s \n",
+			lpFileName);
+		DepSuccess = false;
+		SetLastError(errorToPreserve);
+		return handle;
+	}
+
+	// TODO: check that this file wasn't previously opened with a different dwDesiredAccess
+
+	std::string fileName(lpFileName);
+
+	if ((dwDesiredAccess & GENERIC_READ) != 0)
+	{
+		ProcessInputFile(fileName, handle);
+	}
+	else if ((dwDesiredAccess & GENERIC_WRITE) != 0)
+	{
+		const std::lock_guard<std::mutex> lock(DepOutputLock);
+		DepOutputs.insert(fileName);
+		WriteToLog("Intercepting fileA (output) %s \n", fileName.c_str());
+	}
+
+	SetLastError(errorToPreserve);
+	return handle;
 }
 
-BOOL WINAPI MyReadFile(
-	HANDLE       hFile,
-	LPVOID       lpBuffer,
-	DWORD        nNumberOfBytesToRead,
-	LPDWORD      lpNumberOfBytesRead,
-	LPOVERLAPPED lpOverlapped)
-{
-	WriteToLog("Intercepting read!\n");
-	return TrueReadFile(hFile, lpBuffer, nNumberOfBytesToRead, lpNumberOfBytesRead,
-		lpOverlapped);
-}
+// BOOL WINAPI MyReadFile(
+// 	HANDLE       hFile,
+// 	LPVOID       lpBuffer,
+// 	DWORD        nNumberOfBytesToRead,
+// 	LPDWORD      lpNumberOfBytesRead,
+// 	LPOVERLAPPED lpOverlapped)
+// {
+// 	WriteToLog("Intercepting read!\n");
+// 	return TrueReadFile(hFile, lpBuffer, nNumberOfBytesToRead, lpNumberOfBytesRead,
+// 		lpOverlapped);
+// }
 
 BOOL WINAPI MyWriteFile(
 	HANDLE       hFile,
@@ -203,8 +310,8 @@ void DllDetoursAttach()
 	DetourUpdateThread(GetCurrentThread());
 	DetourAttach(&(PVOID&)TrueCreateFileW, MyCreateFileW);
 	DetourAttach(&(PVOID&)TrueCreateFileA, MyCreateFileA);
-	DetourAttach(&(PVOID&)TrueReadFile, MyReadFile);
-	DetourAttach(&(PVOID&)TrueWriteFile, MyWriteFile);
+	// DetourAttach(&(PVOID&)TrueReadFile, MyReadFile);
+	// DetourAttach(&(PVOID&)TrueWriteFile, MyWriteFile);
 	DetourAttach(&(PVOID&)TrueLoadLibraryW, MyLoadLibraryW);
 	DetourAttach(&(PVOID&)TrueLoadLibraryA, MyLoadLibraryA);
 	DetourAttach(&(PVOID&)TrueCreateProcessA, MyCreateProcessA);
@@ -218,8 +325,8 @@ void DllDetoursDetach()
 	DetourUpdateThread(GetCurrentThread());
 	DetourDetach(&(PVOID&)TrueCreateFileW, MyCreateFileW);
 	DetourDetach(&(PVOID&)TrueCreateFileA, MyCreateFileA);
-	DetourDetach(&(PVOID&)TrueReadFile, MyReadFile);
-	DetourDetach(&(PVOID&)TrueWriteFile, WriteFile);
+	// DetourDetach(&(PVOID&)TrueReadFile, MyReadFile);
+	// DetourDetach(&(PVOID&)TrueWriteFile, WriteFile);
 	DetourDetach(&(PVOID&)TrueLoadLibraryW, MyLoadLibraryW);
 	DetourDetach(&(PVOID&)TrueLoadLibraryA, MyLoadLibraryA);
 	DetourDetach(&(PVOID&)TrueCreateProcessA, MyCreateProcessA);
@@ -231,7 +338,7 @@ BOOL WINAPI DllMain(
 	_In_ HINSTANCE hinstDLL,
 	_In_ DWORD     fdwReason,
 	_In_ LPVOID    lpvReserved
-)
+	)
 {
 	(void)hinstDLL;
 	(void)fdwReason;
@@ -248,11 +355,11 @@ BOOL WINAPI DllMain(
 		
 		HMODULE hm = NULL;
 		if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | 
-		        GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-		        (LPCSTR) &DummyDllIdentifier, &hm) == 0)
+			GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+			(LPCSTR) &DummyDllIdentifier, &hm) == 0)
 		{
-		    int ret = GetLastError();
-		    Assert(false, "GetModuleHandle failed, error = %d\n", ret);
+			int ret = GetLastError();
+			Assert(false, "GetModuleHandle failed, error = %d\n", ret);
 		}
 
 		char PathBuffer[2048];
@@ -302,7 +409,7 @@ BOOL WINAPI DllMain(
 				++iteration;
 			}
 		}
-		Assert(LogFileHandle != INVALID_HANDLE_VALUE, "Failed to create file %s",
+		Assert(LogFileHandle != INVALID_HANDLE_VALUE, "Failed to create log file %s",
 			logFilePath.c_str());
 
 		LPSTR commandLine = GetCommandLine();
@@ -317,6 +424,22 @@ BOOL WINAPI DllMain(
 		// Write out .dep file containing results for given inputs
 		// TODO: Mark failure during course of execution (ie. if too large file 
 		// 	was used, or read+write permission) and invalidate the results here if so. 
+		if (DepSuccess)
+		{
+			for (auto iter : DepInputHashes)
+			{
+				WriteToLog("Dep input %s hash=%s \n", iter.first.c_str(), 
+					md5::DigestToString(&iter.second).c_str());
+			}
+			for (std::string output : DepOutputs)
+			{
+				WriteToLog("Dep output %s \n", output.c_str());
+			}
+		}
+		else
+		{
+			WriteToLog("Dep failed, see log above. No results cache will be written.\n");
+		}
 
 		CloseHandle(LogFileHandle);
 	}

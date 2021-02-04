@@ -35,10 +35,9 @@ local DllLinkerFlags="/DLL /incremental:no /opt:ref /subsystem:console /DEF:sour
 local targets = { "exe", "dll", "sample", "depcopysample" }
 local chosenTargets = {}
 
-
 local function ShellExecute(command)
 	print(command)
-	os.execute(command)
+	return os.execute(command)
 end
 
 for i,v in ipairs(arg) do
@@ -54,7 +53,9 @@ end
 print("Building: ", unpack(chosenTargets))
 
 -- make the build folder if it doesn't exist
-ShellExecute("if not exist "..BuildFolder.." mkdir "..BuildFolder)
+ShellExecute("if not exist "..BuildFolder.." mkdir "..BuildFolder, true)
+
+local buildFailure = false
 
 local bitness = {"x86", "x64"}
 for _,config in ipairs(bitness) do
@@ -69,15 +70,26 @@ for _,config in ipairs(bitness) do
 	winapi.setenv("LIB", libPath)
 
 	for _,target in ipairs(chosenTargets) do
+		local ret = 0
 		-- we have no need of a 32bit launcher exe
 		if target == "exe" and config == "x64" then
-			ShellExecute(compiler..' '..ExeCompilerFlags.." source\\win32_main.cpp /Fe"..BuildFolder.."\\"..ProjectExe.." /link "..ExeLinkerFlags .. " /machine:"..config)
+			ret = ShellExecute(compiler..' '..ExeCompilerFlags.." source\\win32_main.cpp /Fe"..BuildFolder.."\\"..ProjectExe.." /link "..ExeLinkerFlags .. " /machine:"..config)
 		elseif target == "dll" then
-			ShellExecute(compiler..' /LD '..DllCompilerFlags.." source\\win32_depdll.cpp /Fe"..BuildFolder.."\\"..ProjectName..bitName..".dll /link "..DllLinkerFlags.." /libpath:"..detoursLibPath)
+			ret = ShellExecute(compiler..' /LD '..DllCompilerFlags.." source\\win32_depdll.cpp /Fe"..BuildFolder.."\\"..ProjectName..bitName..".dll /link "..DllLinkerFlags.." /libpath:"..detoursLibPath)
 		elseif target == "sample" then
-			ShellExecute(compiler..' '..ExeCompilerFlags.." source\\win32_sample.cpp /Fe"..BuildFolder.."\\"..ProjectName.."sample"..bitName..".exe /link "..ExeLinkerFlags.." /machine:"..config)
+			ret = ShellExecute(compiler..' '..ExeCompilerFlags.." source\\win32_sample.cpp /Fe"..BuildFolder.."\\"..ProjectName.."sample"..bitName..".exe /link "..ExeLinkerFlags.." /machine:"..config)
 		elseif target == "depcopysample" then
-			ShellExecute(compiler..' '..ExeCompilerFlags.." source\\win32_copysample.cpp /Fe"..BuildFolder.."\\".."depcopysample"..bitName..".exe /link "..ExeLinkerFlags.." /machine:"..config)
+			ret = ShellExecute(compiler..' '..ExeCompilerFlags.." source\\win32_copysample.cpp /Fe"..BuildFolder.."\\".."depcopysample"..bitName..".exe /link "..ExeLinkerFlags.." /machine:"..config)
 		end
+		if ret ~= 0 then
+			print('\27[31mFailure! stopping\27[0m')
+			buildFailure = true
+		end
+		if buildFailure then
+			break
+		end
+	end
+	if buildFailure then
+		break
 	end
 end

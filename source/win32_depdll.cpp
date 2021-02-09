@@ -117,7 +117,7 @@ void ProcessInputFile(std::string& fileName, HANDLE handle)
 	}
 }
 
-HANDLE WINAPI MyCreateFileW(
+HANDLE WINAPI InterceptCreateFileW(
 	LPCWSTR               lpFileName,
 	DWORD                 dwDesiredAccess,
 	DWORD                 dwShareMode,
@@ -177,7 +177,7 @@ HANDLE WINAPI MyCreateFileW(
 	return handle;
 }
 
-HANDLE WINAPI MyCreateFileA(
+HANDLE WINAPI InterceptCreateFileA(
 	LPCSTR                lpFileName,
 	DWORD                 dwDesiredAccess,
 	DWORD                 dwShareMode,
@@ -228,7 +228,7 @@ HANDLE WINAPI MyCreateFileA(
 	return handle;
 }
 
-// BOOL WINAPI MyReadFile(
+// BOOL WINAPI InterceptReadFile(
 // 	HANDLE       hFile,
 // 	LPVOID       lpBuffer,
 // 	DWORD        nNumberOfBytesToRead,
@@ -240,31 +240,31 @@ HANDLE WINAPI MyCreateFileA(
 // 		lpOverlapped);
 // }
 
-BOOL WINAPI MyWriteFile(
-	HANDLE       hFile,
-	LPCVOID      lpBuffer,
-	DWORD        nNumberOfBytesToWrite,
-	LPDWORD      lpNumberOfBytesWritten,
-	LPOVERLAPPED lpOverlapped)
-{
-	WriteToLog("Intercepting write!\n");
-	return TrueWriteFile(hFile, lpBuffer, nNumberOfBytesToWrite,
-		lpNumberOfBytesWritten, lpOverlapped);
-}
+// BOOL WINAPI InterceptWriteFile(
+// 	HANDLE       hFile,
+// 	LPCVOID      lpBuffer,
+// 	DWORD        nNumberOfBytesToWrite,
+// 	LPDWORD      lpNumberOfBytesWritten,
+// 	LPOVERLAPPED lpOverlapped)
+// {
+// 	WriteToLog("Intercepting write!\n");
+// 	return TrueWriteFile(hFile, lpBuffer, nNumberOfBytesToWrite,
+// 		lpNumberOfBytesWritten, lpOverlapped);
+// }
 
-HMODULE WINAPI MyLoadLibraryW(LPCWSTR lpLibFileName)
+HMODULE WINAPI InterceptLoadLibraryW(LPCWSTR lpLibFileName)
 {
 	WriteToLog("Intercepting library W %ls \n", lpLibFileName);
 	return TrueLoadLibraryW(lpLibFileName);
 }
 
-HMODULE WINAPI MyLoadLibraryA(LPCSTR lpLibFileName)
+HMODULE WINAPI InterceptLoadLibraryA(LPCSTR lpLibFileName)
 {
 	WriteToLog("Intercepting library A %s \n", lpLibFileName);
 	return TrueLoadLibraryA(lpLibFileName);
 }
 
-BOOL WINAPI MyCreateProcessA(
+BOOL WINAPI InterceptCreateProcessA(
 	LPCSTR                lpApplicationName,
 	LPSTR                 lpCommandLine,
 	LPSECURITY_ATTRIBUTES lpProcessAttributes,
@@ -283,7 +283,7 @@ BOOL WINAPI MyCreateProcessA(
 		lpStartupInfo, lpProcessInformation);
 }
 
-BOOL WINAPI MyCreateProcessW(
+BOOL WINAPI InterceptCreateProcessW(
 	LPCWSTR               lpApplicationName,
 	LPWSTR                 lpCommandLine,
 	LPSECURITY_ATTRIBUTES lpProcessAttributes,
@@ -308,14 +308,14 @@ void DllDetoursAttach()
 
 	DetourTransactionBegin();
 	DetourUpdateThread(GetCurrentThread());
-	DetourAttach(&(PVOID&)TrueCreateFileW, MyCreateFileW);
-	DetourAttach(&(PVOID&)TrueCreateFileA, MyCreateFileA);
-	// DetourAttach(&(PVOID&)TrueReadFile, MyReadFile);
-	// DetourAttach(&(PVOID&)TrueWriteFile, MyWriteFile);
-	DetourAttach(&(PVOID&)TrueLoadLibraryW, MyLoadLibraryW);
-	DetourAttach(&(PVOID&)TrueLoadLibraryA, MyLoadLibraryA);
-	DetourAttach(&(PVOID&)TrueCreateProcessA, MyCreateProcessA);
-	DetourAttach(&(PVOID&)TrueCreateProcessW, MyCreateProcessW);
+	DetourAttach(&(PVOID&)TrueCreateFileW, InterceptCreateFileW);
+	DetourAttach(&(PVOID&)TrueCreateFileA, InterceptCreateFileA);
+	// DetourAttach(&(PVOID&)TrueReadFile, InterceptReadFile);
+	// DetourAttach(&(PVOID&)TrueWriteFile, InterceptWriteFile);
+	DetourAttach(&(PVOID&)TrueLoadLibraryW, InterceptLoadLibraryW);
+	DetourAttach(&(PVOID&)TrueLoadLibraryA, InterceptLoadLibraryA);
+	DetourAttach(&(PVOID&)TrueCreateProcessA, InterceptCreateProcessA);
+	DetourAttach(&(PVOID&)TrueCreateProcessW, InterceptCreateProcessW);
 	DetourTransactionCommit();
 }
 
@@ -323,14 +323,14 @@ void DllDetoursDetach()
 {
 	DetourTransactionBegin();
 	DetourUpdateThread(GetCurrentThread());
-	DetourDetach(&(PVOID&)TrueCreateFileW, MyCreateFileW);
-	DetourDetach(&(PVOID&)TrueCreateFileA, MyCreateFileA);
-	// DetourDetach(&(PVOID&)TrueReadFile, MyReadFile);
-	// DetourDetach(&(PVOID&)TrueWriteFile, WriteFile);
-	DetourDetach(&(PVOID&)TrueLoadLibraryW, MyLoadLibraryW);
-	DetourDetach(&(PVOID&)TrueLoadLibraryA, MyLoadLibraryA);
-	DetourDetach(&(PVOID&)TrueCreateProcessA, MyCreateProcessA);
-	DetourDetach(&(PVOID&)TrueCreateProcessW, MyCreateProcessW);
+	DetourDetach(&(PVOID&)TrueCreateFileW, InterceptCreateFileW);
+	DetourDetach(&(PVOID&)TrueCreateFileA, InterceptCreateFileA);
+	// DetourDetach(&(PVOID&)TrueReadFile, InterceptReadFile);
+	// DetourDetach(&(PVOID&)TrueWriteFile, InterceptWriteFile);
+	DetourDetach(&(PVOID&)TrueLoadLibraryW, InterceptLoadLibraryW);
+	DetourDetach(&(PVOID&)TrueLoadLibraryA, InterceptLoadLibraryA);
+	DetourDetach(&(PVOID&)TrueCreateProcessA, InterceptCreateProcessA);
+	DetourDetach(&(PVOID&)TrueCreateProcessW, InterceptCreateProcessW);
 	DetourTransactionCommit();
 }
 

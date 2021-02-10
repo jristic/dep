@@ -113,6 +113,11 @@ md5::Digest ComputeFileHash(HANDLE handle)
 
 	free(mem);
 
+	// Reset file pointer back to head since ReadFile will have advanced it.
+    DWORD result = SetFilePointer(handle, 0, NULL, FILE_BEGIN);
+    Assert(result != INVALID_SET_FILE_POINTER, "Failed to set file pointer, error=%d",
+    	GetLastError());
+
 	return digest;
 }
 

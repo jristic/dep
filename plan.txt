@@ -18,6 +18,7 @@ TODOs:
 2. make things like dep cache location configurable via a dep.cfg that sits in the exe/dll folder
 3. Add the ability to ignore certain files or file types via dep.cfg
 4. Add some debug ability to check for hash collisions. 
+5. Check if subprocess creation is trying to launch via dep as well. If so, do not attempt to intercept. 
 
 
 Potential next steps:

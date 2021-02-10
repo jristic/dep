@@ -2,8 +2,9 @@
 
 #include <windows.h>
 #include <winbase.h>
-#include <utility>
+#include <psapi.h>
 #include <detours.h>
+#include <utility>
 #include <string>
 #include <mutex>
 #include <map>
@@ -28,6 +29,9 @@ bool DepSuccess = true;
 std::mutex DepInputLock;
 std::map<std::string, md5::Digest> DepInputHashes;
 
+std::mutex DepLibraryLock;
+std::set<std::string> DepLibraries;
+
 std::mutex DepOutputLock;
 std::set<std::string> DepOutputs;
 
@@ -40,6 +44,8 @@ static BOOL (WINAPI * TrueReadFile)(HANDLE, LPVOID, DWORD, LPDWORD, LPOVERLAPPED
 static BOOL (WINAPI * TrueWriteFile)(HANDLE, LPCVOID, DWORD, LPDWORD, LPOVERLAPPED) = WriteFile;
 static HMODULE (WINAPI * TrueLoadLibraryW)(LPCWSTR) = LoadLibraryW;
 static HMODULE (WINAPI * TrueLoadLibraryA)(LPCSTR) = LoadLibraryA;
+static HMODULE (WINAPI * TrueLoadLibraryExW)(LPCWSTR,HANDLE,DWORD) = LoadLibraryExW;
+static HMODULE (WINAPI * TrueLoadLibraryExA)(LPCSTR,HANDLE,DWORD) = LoadLibraryExA;
 static BOOL (WINAPI * TrueCreateProcessA)(LPCSTR, LPSTR, LPSECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES,
 	BOOL, DWORD, LPVOID, LPCSTR, LPSTARTUPINFOA, LPPROCESS_INFORMATION) = CreateProcessA;
 static BOOL (WINAPI * TrueCreateProcessW)(LPCWSTR, LPWSTR, LPSECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES,
@@ -62,6 +68,54 @@ void WriteToLog(const char *format, ...)
 	Assert(result, "Failed to write file, last error = %d", GetLastError());
 }
 
+std::string ConvertWideString(LPCWSTR string)
+{
+	size_t mblen = (wcslen(string)+1)*2;
+	char* mbstr = (char*)malloc(mblen);
+	size_t convertedSize = 0;
+	int result = wcstombs_s(&convertedSize, mbstr, mblen, string, mblen);
+	Assert(result == 0, "Failed to convert string %ls, wcstombs_s errno=%d", 
+		string, result);
+	std::string str(mbstr);
+	free(mbstr);
+	return str;
+}
+
+md5::Digest ComputeFileHash(HANDLE handle)
+{
+	md5::Context md5Ctx;
+	md5::Digest digest;
+	md5::Init(&md5Ctx);
+
+	uint32_t readSize = 4*1024*1024; // 4 MB
+	unsigned char* mem = (unsigned char*)malloc(readSize);
+	uint32_t bytesRead = 0;
+
+	LARGE_INTEGER large;
+	BOOL success = GetFileSizeEx(handle, &large);
+	Assert(success, "Failed to get file size, error=%d", GetLastError());
+	Assert(large.QuadPart < UINT_MAX, "File is too large, not supported");
+	uint32_t bytesToRead = large.LowPart;
+
+	while (bytesRead < bytesToRead)
+	{
+		OVERLAPPED ovr = {};
+		ovr.Offset = bytesRead;
+		DWORD bytesReadThisIteration;
+		success = TrueReadFile(handle, mem, min(bytesToRead, readSize), 
+			&bytesReadThisIteration, &ovr);
+		Assert(success, "Failed to read file, error=%d", GetLastError());
+		bytesRead += bytesReadThisIteration;
+		md5::Update(&md5Ctx, mem, bytesReadThisIteration);
+	}
+
+	md5::Final(&digest, &md5Ctx);
+
+	free(mem);
+
+	return digest;
+}
+
 void ProcessInputFile(std::string& fileName, HANDLE handle)
 {
 	// check if we already have this file
@@ -73,47 +127,26 @@ void ProcessInputFile(std::string& fileName, HANDLE handle)
 			WriteToLog("Repeated file open for %s, skipping \n", fileName.c_str());
 			checkFile = false;
 		}
+		else
+		{
+			// Insert a blank entry so another thread doesn't come along before
+			//	we've finished hashing and think it needs to perform hashing as well. 
+			DepInputHashes[fileName] = {};
+		}
 	}
 
 	if (checkFile)
 	{
-		md5::Context md5Ctx;
-		md5::Digest digest;
-		md5::Init(&md5Ctx);
-
-		uint32_t readSize = 4*1024*1024; // 4 MB
-		unsigned char* mem = (unsigned char*)malloc(readSize);
-		uint32_t bytesRead = 0;
-
-		LARGE_INTEGER large;
-		BOOL success = GetFileSizeEx(handle, &large);
-		Assert(success, "Failed to get file size, error=%d", GetLastError());
-		Assert(large.QuadPart < UINT_MAX, "File is too large, not supported");
-		uint32_t bytesToRead = large.LowPart;
-
-		while (bytesRead < bytesToRead)
-		{
-			OVERLAPPED ovr = {};
-			ovr.Offset = bytesRead;
-			DWORD bytesReadThisIteration;
-			success = TrueReadFile(handle, mem, min(bytesToRead, readSize), 
-				&bytesReadThisIteration, &ovr);
-			Assert(success, "Failed to read file, error=%d", GetLastError());
-			bytesRead += bytesReadThisIteration;
-			md5::Update(&md5Ctx, mem, bytesReadThisIteration);
-		}
-
-		md5::Final(&digest, &md5Ctx);
+		md5::Digest digest = ComputeFileHash(handle);
 		std::string hash = md5::DigestToString(&digest);
-		WriteToLog("Intercepting fileW (input) %s, hash=%s \n", fileName.c_str(), 
+
+		WriteToLog("Input file %s, hash=%s \n", fileName.c_str(), 
 			hash.c_str() );
 
 		{
 			const std::lock_guard<std::mutex> lock(DepInputLock);
 			DepInputHashes[fileName] = digest;
 		}
-
-		free(mem);
 	}
 }
 
@@ -126,6 +159,7 @@ HANDLE WINAPI InterceptCreateFileW(
 	DWORD                 dwFlagsAndAttributes,
 	HANDLE                hTemplateFile)
 {
+	WriteToLog("Intercepting CreateFileW %ls \n", lpFileName);
 	HANDLE handle = TrueCreateFileW(lpFileName, dwDesiredAccess, dwShareMode,
 		lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
 	DWORD errorToPreserve = GetLastError();
@@ -150,17 +184,7 @@ HANDLE WINAPI InterceptCreateFileW(
 
 	// TODO: check that this file wasn't previously opened with a different dwDesiredAccess
 
-	// Convert to a regular char string
-	std::string fileName;
-	{
-		size_t mblen = (wcslen(lpFileName)+1)*2;
-		char* mbstr = (char*)malloc(mblen);
-		size_t convertedSize = 0;
-		int result = wcstombs_s(&convertedSize, mbstr, mblen, lpFileName, mblen);
-		Assert(result == 0, "Failed to convert string %ls, wcstombs_s errno=%d", 
-			lpFileName, result);
-		fileName = mbstr;
-	}
+	std::string fileName = ConvertWideString(lpFileName);
 
 	if ((dwDesiredAccess & GENERIC_READ) != 0)
 	{
@@ -170,7 +194,7 @@ HANDLE WINAPI InterceptCreateFileW(
 	{
 		const std::lock_guard<std::mutex> lock(DepOutputLock);
 		DepOutputs.insert(fileName);
-		WriteToLog("Intercepting fileW (output) %s \n", fileName.c_str());
+		WriteToLog("Output file %s \n", fileName.c_str());
 	}
 
 	SetLastError(errorToPreserve);
@@ -186,7 +210,7 @@ HANDLE WINAPI InterceptCreateFileA(
 	DWORD                 dwFlagsAndAttributes,
 	HANDLE                hTemplateFile)
 {
-	WriteToLog("Intercepting fileA %s \n", lpFileName);
+	WriteToLog("Intercepting CreateFileA %s \n", lpFileName);
 	HANDLE handle = TrueCreateFileA(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes,
 		dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
 	DWORD errorToPreserve = GetLastError();
@@ -221,7 +245,7 @@ HANDLE WINAPI InterceptCreateFileA(
 	{
 		const std::lock_guard<std::mutex> lock(DepOutputLock);
 		DepOutputs.insert(fileName);
-		WriteToLog("Intercepting fileA (output) %s \n", fileName.c_str());
+		WriteToLog("Output file %s \n", fileName.c_str());
 	}
 
 	SetLastError(errorToPreserve);
@@ -252,16 +276,134 @@ HANDLE WINAPI InterceptCreateFileA(
 // 		lpNumberOfBytesWritten, lpOverlapped);
 // }
 
+void ProcessLibrary(HMODULE module)
+{
+	std::string libPath;
+	{
+		DWORD PathBufferSize = 2048;
+		char* PathBuffer = (char*)malloc(PathBufferSize);
+		DWORD copiedSize = GetModuleFileName(module, PathBuffer, PathBufferSize);
+		if (copiedSize == 0)
+		{
+			Assert(false, "depdll: Error: failed to get dep dll path. \n");
+		}
+		else if (copiedSize == PathBufferSize &&
+			GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+		{
+			Assert(false, "depdll: Error: buffer too short for dep dll path. \n");
+		}
+
+		libPath = PathBuffer;
+		free(PathBuffer);
+	}
+
+	{
+		const std::lock_guard<std::mutex> lock(DepLibraryLock);
+		DepLibraries.insert(libPath);
+		WriteToLog("Library full path %s \n", libPath.c_str());
+	}
+}
+
 HMODULE WINAPI InterceptLoadLibraryW(LPCWSTR lpLibFileName)
 {
-	WriteToLog("Intercepting library W %ls \n", lpLibFileName);
-	return TrueLoadLibraryW(lpLibFileName);
+	WriteToLog("Intercepting LoadLibraryW %ls \n", lpLibFileName);
+
+	HMODULE module = TrueLoadLibraryW(lpLibFileName);
+	DWORD errorToPreserve = GetLastError();
+
+	// Early out if load failed - this is a valid flow. Don't track it. 
+	if (module == NULL)
+	{
+		WriteToLog("Failed to load library %ls \n", lpLibFileName);
+		SetLastError(errorToPreserve);
+		return module;
+	}
+
+	ProcessLibrary(module);
+
+	SetLastError(errorToPreserve);
+	return module;
 }
 
 HMODULE WINAPI InterceptLoadLibraryA(LPCSTR lpLibFileName)
 {
-	WriteToLog("Intercepting library A %s \n", lpLibFileName);
-	return TrueLoadLibraryA(lpLibFileName);
+	WriteToLog("Intercepting LoadLibraryA %s \n", lpLibFileName);
+
+	HMODULE module = TrueLoadLibraryA(lpLibFileName);
+	DWORD errorToPreserve = GetLastError();
+
+	// Early out if load failed - this is a valid flow. Don't track it. 
+	if (module == NULL)
+	{
+		WriteToLog("Failed to load library %s \n", lpLibFileName);
+		SetLastError(errorToPreserve);
+		return module;
+	}
+
+	ProcessLibrary(module);
+
+	SetLastError(errorToPreserve);
+	return module;
+}
+
+HMODULE WINAPI InterceptLoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, DWORD dwFlags)
+{
+	WriteToLog("Intercepting LoadLibraryExW %ls \n", lpLibFileName);
+
+	HMODULE module = TrueLoadLibraryExW(lpLibFileName, hFile, dwFlags);
+	DWORD errorToPreserve = GetLastError();
+
+	// Early out if load failed - this is a valid flow. Don't track it. 
+	if (module == NULL)
+	{
+		WriteToLog("Failed to load library %ls \n", lpLibFileName);
+		SetLastError(errorToPreserve);
+		return module;
+	}
+
+	if ((dwFlags & LOAD_LIBRARY_AS_DATAFILE) != 0 ||
+		(dwFlags & LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE) != 0)
+	{
+		WriteToLog("Unsupported loadlibrary, dep failure");
+		DepSuccess = false;
+		SetLastError(errorToPreserve);
+		return module;
+	}
+
+	ProcessLibrary(module);
+
+	SetLastError(errorToPreserve);
+	return module;
+}
+
+HMODULE WINAPI InterceptLoadLibraryExA(LPCSTR lpLibFileName, HANDLE hFile, DWORD dwFlags)
+{
+	WriteToLog("Intercepting LoadLibraryExA %s \n", lpLibFileName);
+
+	HMODULE module = TrueLoadLibraryExA(lpLibFileName, hFile, dwFlags);
+	DWORD errorToPreserve = GetLastError();
+
+	// Early out if load failed - this is a valid flow. Don't track it. 
+	if (module == NULL)
+	{
+		WriteToLog("Failed to load library %s \n", lpLibFileName);
+		SetLastError(errorToPreserve);
+		return module;
+	}
+
+	if ((dwFlags & LOAD_LIBRARY_AS_DATAFILE) != 0 ||
+		(dwFlags & LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE) != 0)
+	{
+		WriteToLog("Unsupported loadlibrary, dep failure");
+		DepSuccess = false;
+		SetLastError(errorToPreserve);
+		return module;
+	}
+
+	ProcessLibrary(module);
+
+	SetLastError(errorToPreserve);
+	return module;
 }
 
 BOOL WINAPI InterceptCreateProcessA(
@@ -277,6 +419,11 @@ BOOL WINAPI InterceptCreateProcessA(
 	LPPROCESS_INFORMATION lpProcessInformation)
 {
 	WriteToLog("Intercepting create process A %s %s \n", lpApplicationName, lpCommandLine);
+
+	// TODO: implement
+	DepSuccess = false;
+	WriteToLog("Dep failure, createprocess not implemented \n");
+
 	return TrueCreateProcessA(
 		lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes,
 		bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, 
@@ -296,6 +443,11 @@ BOOL WINAPI InterceptCreateProcessW(
 	LPPROCESS_INFORMATION lpProcessInformation)
 {
 	WriteToLog("Intercepting create process W %ls %ls \n", lpApplicationName, lpCommandLine);
+
+	// TODO: implement
+	DepSuccess = false;
+	WriteToLog("Dep failure, createprocess not implemented \n");
+
 	return TrueCreateProcessW(
 		lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes,
 		bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, 
@@ -314,6 +466,8 @@ void DllDetoursAttach()
 	// DetourAttach(&(PVOID&)TrueWriteFile, InterceptWriteFile);
 	DetourAttach(&(PVOID&)TrueLoadLibraryW, InterceptLoadLibraryW);
 	DetourAttach(&(PVOID&)TrueLoadLibraryA, InterceptLoadLibraryA);
+	DetourAttach(&(PVOID&)TrueLoadLibraryExW, InterceptLoadLibraryExW);
+	DetourAttach(&(PVOID&)TrueLoadLibraryExA, InterceptLoadLibraryExA);
 	DetourAttach(&(PVOID&)TrueCreateProcessA, InterceptCreateProcessA);
 	DetourAttach(&(PVOID&)TrueCreateProcessW, InterceptCreateProcessW);
 	DetourTransactionCommit();
@@ -329,6 +483,8 @@ void DllDetoursDetach()
 	// DetourDetach(&(PVOID&)TrueWriteFile, InterceptWriteFile);
 	DetourDetach(&(PVOID&)TrueLoadLibraryW, InterceptLoadLibraryW);
 	DetourDetach(&(PVOID&)TrueLoadLibraryA, InterceptLoadLibraryA);
+	DetourDetach(&(PVOID&)TrueLoadLibraryExW, InterceptLoadLibraryExW);
+	DetourDetach(&(PVOID&)TrueLoadLibraryExA, InterceptLoadLibraryExA);
 	DetourDetach(&(PVOID&)TrueCreateProcessA, InterceptCreateProcessA);
 	DetourDetach(&(PVOID&)TrueCreateProcessW, InterceptCreateProcessW);
 	DetourTransactionCommit();
@@ -428,12 +584,33 @@ BOOL WINAPI DllMain(
 		{
 			for (auto iter : DepInputHashes)
 			{
+				// TODO: add sanity check that input file contents are still the same.
 				WriteToLog("Dep input %s hash=%s \n", iter.first.c_str(), 
 					md5::DigestToString(&iter.second).c_str());
 			}
 			for (std::string output : DepOutputs)
 			{
-				WriteToLog("Dep output %s \n", output.c_str());
+				HANDLE handle = TrueCreateFileA(output.c_str(), GENERIC_READ, 0,
+					nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+				Assert(handle != INVALID_HANDLE_VALUE, "Failed to open output file %s",
+					output.c_str());
+
+				md5::Digest digest = ComputeFileHash(handle);
+				std::string hash = md5::DigestToString(&digest);
+
+				WriteToLog("Dep output %s, hash=%s \n", output.c_str(), hash.c_str());
+			}
+			for (std::string library : DepLibraries)
+			{
+				HANDLE handle = TrueCreateFileA(library.c_str(), GENERIC_READ, 0,
+					nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+				Assert(handle != INVALID_HANDLE_VALUE, "Failed to open library file %s",
+					library.c_str());
+
+				md5::Digest digest = ComputeFileHash(handle);
+				std::string hash = md5::DigestToString(&digest);
+
+				WriteToLog("Dep library %s, hash=%s \n", library.c_str(), hash.c_str());
 			}
 		}
 		else

@@ -423,7 +423,7 @@ BOOL WINAPI InterceptCreateProcessA(
 	LPSTARTUPINFOA        lpStartupInfo,
 	LPPROCESS_INFORMATION lpProcessInformation)
 {
-	WriteToLog("Intercepting create process A %s %s \n", lpApplicationName, lpCommandLine);
+	WriteToLog("Intercepting CreateProcessA %s %s \n", lpApplicationName, lpCommandLine);
 
 	// TODO: implement
 	DepSuccess = false;
@@ -447,7 +447,7 @@ BOOL WINAPI InterceptCreateProcessW(
 	LPSTARTUPINFOW        lpStartupInfo,
 	LPPROCESS_INFORMATION lpProcessInformation)
 {
-	WriteToLog("Intercepting create process W %ls %ls \n", lpApplicationName, lpCommandLine);
+	WriteToLog("Intercepting CreateProcessW %ls %ls \n", lpApplicationName, lpCommandLine);
 
 	// TODO: implement
 	DepSuccess = false;

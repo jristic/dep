@@ -1,16 +1,11 @@
-1. Start hashing inputs and write their values out into dep summary files
-	a. Write the output hashes as well. 
-2. Store output results for each given overall input hash.
-3. Skip execution step and copy stored results if input hash matches previously compiled one
-4. Handle subprocess creation
+1. .....  ???? Figure out what the process is for determining which dll invocation to check for same inputs. 
+2. Skip execution step and copy stored results if input hash matches previously compiled one
+3. Handle subprocess creation
 	-> basically what we do in the dep exe needs to happen from within the dll as well, recursively setting up itself within the next child
 	-> would it be easier/better to handle each sub-process as a separate dep invocation, or recursively combine children into the parent to create a single invocation with all the inputs/outputs in one big set?
-5. Tools for maintaining how much space is being consumed by the dep cache. 
-	-> maybe should live in depwatcher? other option is to check the usage of the cache with every invocation of dep, but this could be a lengthy process for a large cache
-		-> or just create a separate utility, more work than depwatcher option but reasonable if depwatcher hasn't been implemented and this is high priority
-	-> touch the cache file every time it's used for the result of an operation so we can do a least-recently-used eviction system
-6. ...
-7. Profit?
+	-> Check if subprocess creation is trying to launch via dep as well. If so, do not attempt to intercept. 
+4. ...
+5. Profit?
 
 
 TODOs:
@@ -18,16 +13,22 @@ TODOs:
 2. make things like dep cache location configurable via a dep.cfg that sits in the exe/dll folder
 3. Add the ability to ignore certain files or file types via dep.cfg
 4. Add some debug ability to check for hash collisions. 
-5. Check if subprocess creation is trying to launch via dep as well. If so, do not attempt to intercept. 
+
+Optimizations:
+1. Currently dep.exe has to compute input hashes, then if not skipped the dll does it again. This could be collapsed into one, since the input hashes need to be computed up-front anyway. 
 
 
 Potential next steps:
-	1. Implement depwatcher
+	1. Tools for maintaining how much space is being consumed by the dep cache. 
+		-> maybe should live in depwatcher? other option is to check the usage of the cache with every invocation of dep, but this could be a lengthy process for a large cache
+			-> or just create a separate utility, more work than depwatcher option but reasonable if depwatcher hasn't been implemented and this is high priority
+		-> touch the cache file every time it's used for the result of an operation so we can do a least-recently-used eviction system
+	2. Implement depwatcher
 		-> have a persistent shared system process which caches hash results for large/all files?
 		-> reduce the amount of time spent re-hashing often used or large files
-	2. Dep build cache
+	3. Dep build cache
 		-> have a dep server that dep users can pass up their build results so other users can resuse their results instead of having to build everything the first time
-	3. Distribute dep work 
+	4. Distribute dep work 
 		-> If depwatcher sees that the build cache doesn't have a result, optionally send the exe, inputs and command to another client to perform. 
 			-> would need to figure out how to load level across clients
 		-> not sure if this is feasible?

@@ -114,9 +114,9 @@ md5::Digest ComputeFileHash(HANDLE handle)
 	free(mem);
 
 	// Reset file pointer back to head since ReadFile will have advanced it.
-    DWORD result = SetFilePointer(handle, 0, NULL, FILE_BEGIN);
-    Assert(result != INVALID_SET_FILE_POINTER, "Failed to set file pointer, error=%d",
-    	GetLastError());
+	DWORD result = SetFilePointer(handle, 0, NULL, FILE_BEGIN);
+	Assert(result != INVALID_SET_FILE_POINTER, "Failed to set file pointer, error=%d",
+		GetLastError());
 
 	return digest;
 }
@@ -603,6 +603,8 @@ BOOL WINAPI DllMain(
 				md5::Digest digest = ComputeFileHash(handle);
 				std::string hash = md5::DigestToString(&digest);
 
+				CloseHandle(handle);
+
 				WriteToLog("Dep output %s, hash=%s \n", output.c_str(), hash.c_str());
 			}
 			for (std::string library : DepLibraries)
@@ -614,6 +616,8 @@ BOOL WINAPI DllMain(
 
 				md5::Digest digest = ComputeFileHash(handle);
 				std::string hash = md5::DigestToString(&digest);
+
+				CloseHandle(handle);
 
 				WriteToLog("Dep library %s, hash=%s \n", library.c_str(), hash.c_str());
 			}

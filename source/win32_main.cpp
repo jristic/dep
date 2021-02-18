@@ -251,6 +251,13 @@ int CDECL main(int argc, char **argv)
 		DumpProcess(pi.hProcess);
 	}
 
+	// Copy payload to DLL
+	{
+		char* payload = (char*)subFolder.c_str();
+		BOOL success = DetourCopyPayloadToProcess(pi.hProcess, GuidDep, payload, 32);
+		Assert(success, "Failed to copy payload, error=%d", GetLastError());
+	}
+
 	ResumeThread(pi.hThread);
 
 	WaitForSingleObject(pi.hProcess, INFINITE);

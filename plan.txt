@@ -1,11 +1,8 @@
-* Switch to using GetFinalPathNameByHandleA to get full file path.
-* Compute the command state hash from within the dll as well. Or pass via Detours CopyPayload?
-	-> Will need to error out if a .bat is being called directly since this will produce a modified command line within the dll. Use "cmd.exe /k <example>.bat" instead. 
-* Write out the state for the latest invocation only which contains the input signature and output signature.
-* In the exe check if the input signature from the latest written invocation matches the current input signature on disk. If so skip. 
+* Write out the state for the latest invocation only which contains the input signature and output signature. Also add the return value of the process.
+* In the exe check if the input signature from the latest written invocation matches the current input signature on disk. If so skip and return the saved return value for the process. 
 * Handle subprocess creation
 	-> basically what we do in the dep exe needs to happen from within the dll as well, recursively setting up itself within the next child
-	-> would it be easier/better to handle each sub-process as a separate dep invocation, or recursively combine children into the parent to create a single invocation with all the inputs/outputs in one big set?
+	-> if up to date, instead launch a depskip.exe process which will accept the return value given by the previous invocation and return that to maintain opaque operation to the intercepted process
 	-> Check if subprocess creation is trying to launch via dep as well. If so, do not attempt to intercept. 
 * ...
 * Profit?
@@ -23,7 +20,7 @@ Optimizations:
 
 
 Potential next steps:
-* Figure out how to expand dep to support saving not just the last executed state for skipping, but also every previous invocation so if the n-2 invocation is the same as the n invocation but not the n-1 invocation, then it can restore the outputs produced by the n-2 invocation. 
+* Figure out how to expand dep to support saving not just the last executed state for skipping, but also every previous invocation. So if the n-2 invocation is the same as the n invocation but not the n-1 invocation, then it can restore the outputs produced by the n-2 invocation. 
 * Tools for maintaining how much space is being consumed by the dep cache. 
 	-> maybe should live in depwatcher? other option is to check the usage of the cache with every invocation of dep, but this could be a lengthy process for a large cache
 		-> or just create a separate utility, more work than depwatcher option but reasonable if depwatcher hasn't been implemented and this is high priority

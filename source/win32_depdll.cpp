@@ -281,26 +281,30 @@ HANDLE WINAPI InterceptCreateFileA(
 // 		lpNumberOfBytesWritten, lpOverlapped);
 // }
 
+std::string GetLibraryPath(HMODULE module)
+{
+	DWORD PathBufferSize = 2048;
+	char* PathBuffer = (char*)malloc(PathBufferSize);
+	DWORD copiedSize = GetModuleFileName(module, PathBuffer, PathBufferSize);
+	if (copiedSize == 0)
+	{
+		Assert(false, "depdll: Error: failed to get dep dll path. \n");
+	}
+	else if (copiedSize == PathBufferSize &&
+		GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+	{
+		Assert(false, "depdll: Error: buffer too short for dep dll path. \n");
+	}
+
+	std::string libPath = PathBuffer;
+	free(PathBuffer);
+
+	return libPath;
+}
+
 void ProcessLibrary(HMODULE module)
 {
-	std::string libPath;
-	{
-		DWORD PathBufferSize = 2048;
-		char* PathBuffer = (char*)malloc(PathBufferSize);
-		DWORD copiedSize = GetModuleFileName(module, PathBuffer, PathBufferSize);
-		if (copiedSize == 0)
-		{
-			Assert(false, "depdll: Error: failed to get dep dll path. \n");
-		}
-		else if (copiedSize == PathBufferSize &&
-			GetLastError() == ERROR_INSUFFICIENT_BUFFER)
-		{
-			Assert(false, "depdll: Error: buffer too short for dep dll path. \n");
-		}
-
-		libPath = PathBuffer;
-		free(PathBuffer);
-	}
+	std::string libPath = GetLibraryPath(module);
 
 	{
 		const std::lock_guard<std::mutex> lock(DepLibraryLock);
@@ -523,19 +527,7 @@ BOOL WINAPI DllMain(
 			Assert(false, "GetModuleHandle failed, error = %d\n", ret);
 		}
 
-		char PathBuffer[2048];
-		int copiedSize = GetModuleFileName(hm, PathBuffer, ARRAYSIZE(PathBuffer));
-		if (copiedSize == 0)
-		{
-			Assert(false, "depdll: Error: failed to get dep dll path. \n");
-		}
-		else if (copiedSize == ARRAYSIZE(PathBuffer) &&
-			GetLastError() == ERROR_INSUFFICIENT_BUFFER)
-		{
-			Assert(false, "depdll: Error: buffer too short for dep dll path. \n");
-		}
-
-		std::string DllPath = PathBuffer;
+		std::string DllPath = GetLibraryPath(hm);
 
 		size_t dllPos = DllPath.rfind(DllName);
 		Assert(dllPos != std::string::npos, "Could not find dll name in string %s",
@@ -575,6 +567,21 @@ BOOL WINAPI DllMain(
 
 		LPSTR commandLine = GetCommandLine();
 		WriteToLog("Invocation: Dll=%s commandLine=%s \n", DllPath.c_str(), commandLine);
+
+		char commandStateHash[32+1];
+		HMODULE next = NULL;
+		while ((next = DetourEnumerateModules(next)) != NULL)
+		{
+			DWORD payloadSize = 0;
+			void* payload = DetourFindPayload(next, GuidDep, &payloadSize);
+			if (!payload)
+				continue;
+			memcpy(commandStateHash, payload, 32);
+			commandStateHash[32] = 0;
+			break;
+		}
+
+		WriteToLog("Command state hash: %s \n", commandStateHash);
 
 		DllDetoursAttach();
 	}

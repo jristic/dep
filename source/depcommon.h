@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdarg.h>
+#include <guiddef.h>
 
 void SPrint(char* buf, int buf_size, const char *str, ...)
 {
@@ -22,9 +23,11 @@ void SPrint(char* buf, int buf_size, const char *str, ...)
 				__FILE__, __LINE__, 					\
 				#expression,							\
 				##__VA_ARGS__);							\
+			printf("%s\n",__buf);						\
 			if (IsDebuggerPresent())					\
 			{											\
 				OutputDebugString(__buf);				\
+				OutputDebugString("\n");				\
 				DebugBreak();							\
 			}											\
 			else										\
@@ -39,3 +42,8 @@ void SPrint(char* buf, int buf_size, const char *str, ...)
 		__pragma(warning(default:4127))					\
 	} while (0);										\
 
+
+const GUID GuidDep = {
+    0xd8e2dc69, 0x3004, 0x453e,
+    {0x94, 0x15, 0x19, 0x0e, 0x79, 0xe8, 0x93, 0x52}
+};

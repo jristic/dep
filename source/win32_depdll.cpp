@@ -23,8 +23,12 @@ const char* DllName = "dep32.dll";
 
 static void DummyDllIdentifier() { return; }
 
+std::string LogFilePath;
 HANDLE LogFileHandle = INVALID_HANDLE_VALUE;
 bool DepSuccess = true;
+
+std::string DepCachePath;
+std::string DepCommandStatePath;
 
 std::mutex DepInputLock;
 std::map<std::string, md5::Digest> DepInputHashes;
@@ -499,6 +503,33 @@ void DllDetoursDetach()
 	DetourTransactionCommit();
 }
 
+void CacheFileWriteCount(HANDLE file, uint32_t count)
+{
+	DWORD bytesWritten;
+	BOOL success = TrueWriteFile(file, &count, sizeof(count), &bytesWritten, NULL);
+	Assert(success, "Failed to write file");
+	Assert(bytesWritten == sizeof(count), "Failed to write full count");
+}
+
+void CacheFileWriteFileInfo(HANDLE file, const char* path, md5::Digest& hash)
+{
+	uint32_t pathLength = (uint32_t)strlen(path);
+
+	DWORD bytesWritten;
+
+	BOOL success = TrueWriteFile(file, &pathLength, sizeof(pathLength), &bytesWritten, NULL);
+	Assert(success, "Failed to write file");
+	Assert(bytesWritten == sizeof(pathLength), "Failed to write full amount");
+
+	success = TrueWriteFile(file, path, pathLength, &bytesWritten, NULL);
+	Assert(success, "Failed to write file");
+	Assert(bytesWritten == pathLength, "Failed to write full amount");
+
+	success = TrueWriteFile(file, hash.bytes, sizeof(hash.bytes), &bytesWritten, NULL);
+	Assert(success, "Failed to write file");
+	Assert(bytesWritten == sizeof(hash.bytes), "Failed to write full amount");
+}
+
 BOOL WINAPI DllMain(
 	_In_ HINSTANCE hinstDLL,
 	_In_ DWORD     fdwReason,
@@ -534,7 +565,7 @@ BOOL WINAPI DllMain(
 			DllPath.c_str());
 		std::string DirectoryPath = DllPath.substr(0, dllPos);
 
-		std::string DepCachePath = DirectoryPath + "depcache\\";
+		DepCachePath = DirectoryPath + "depcache\\";
 
 		SYSTEMTIME time;
 		GetLocalTime(&time);
@@ -542,9 +573,9 @@ BOOL WINAPI DllMain(
 		char tmpBuffer[128];
 		snprintf(tmpBuffer, sizeof(tmpBuffer), "%d_%.2d_%.2d__%.2d_%.2d_%.2d.log",
 			time.wYear,	time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond);
-		std::string logFilePath = DepCachePath + tmpBuffer;
+		LogFilePath = DepCachePath + tmpBuffer;
 		
-		LogFileHandle = TrueCreateFileA(logFilePath.c_str(), GENERIC_WRITE, 0,
+		LogFileHandle = TrueCreateFileA(LogFilePath.c_str(), GENERIC_WRITE, 0,
 			nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
 		if (LogFileHandle == INVALID_HANDLE_VALUE)
 		{ 
@@ -556,14 +587,14 @@ BOOL WINAPI DllMain(
 				snprintf(tmpBuffer, sizeof(tmpBuffer), "%d_%.2d_%.2d__%.2d_%.2d_%.2d__%d.log",
 					time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond,
 					iteration);
-				logFilePath = DepCachePath + tmpBuffer;
-				LogFileHandle = TrueCreateFileA(logFilePath.c_str(), GENERIC_WRITE, 0, nullptr,
+				LogFilePath = DepCachePath + tmpBuffer;
+				LogFileHandle = TrueCreateFileA(LogFilePath.c_str(), GENERIC_WRITE, 0, nullptr,
 					CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
 				++iteration;
 			}
 		}
 		Assert(LogFileHandle != INVALID_HANDLE_VALUE, "Failed to create log file %s",
-			logFilePath.c_str());
+			LogFilePath.c_str());
 
 		LPSTR commandLine = GetCommandLine();
 		WriteToLog("Invocation: Dll=%s commandLine=%s \n", DllPath.c_str(), commandLine);
@@ -581,6 +612,8 @@ BOOL WINAPI DllMain(
 			break;
 		}
 
+		DepCommandStatePath = DepCachePath + commandStateHash + "\\";
+
 		WriteToLog("Command state hash: %s \n", commandStateHash);
 
 		DllDetoursAttach();
@@ -590,30 +623,15 @@ BOOL WINAPI DllMain(
 		DllDetoursDetach();
 
 		// Write out .dep file containing results for given inputs
-		// TODO: Mark failure during course of execution (ie. if too large file 
-		// 	was used, or read+write permission) and invalidate the results here if so. 
 		if (DepSuccess)
 		{
-			for (auto iter : DepInputHashes)
-			{
-				// TODO: add sanity check that input file contents are still the same.
-				WriteToLog("Dep input %s hash=%s \n", iter.first.c_str(), 
-					md5::DigestToString(&iter.second).c_str());
-			}
-			for (std::string output : DepOutputs)
-			{
-				HANDLE handle = TrueCreateFileA(output.c_str(), GENERIC_READ, 0,
-					nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-				Assert(handle != INVALID_HANDLE_VALUE, "Failed to open output file %s",
-					output.c_str());
+			std::string depCachePath = DepCommandStatePath + "latest.dep";
+			HANDLE depCacheFile = TrueCreateFileA(depCachePath.c_str(), GENERIC_WRITE, 0,
+				nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+			Assert(depCacheFile != INVALID_HANDLE_VALUE, "Failed to create log file %s",
+				depCachePath.c_str());
 
-				md5::Digest digest = ComputeFileHash(handle);
-				std::string hash = md5::DigestToString(&digest);
-
-				CloseHandle(handle);
-
-				WriteToLog("Dep output %s, hash=%s \n", output.c_str(), hash.c_str());
-			}
+			CacheFileWriteCount(depCacheFile, (uint32_t)DepLibraries.size());
 			for (std::string library : DepLibraries)
 			{
 				HANDLE handle = TrueCreateFileA(library.c_str(), GENERIC_READ, 0,
@@ -626,12 +644,47 @@ BOOL WINAPI DllMain(
 
 				CloseHandle(handle);
 
+				CacheFileWriteFileInfo(depCacheFile, library.c_str(), digest);
+
 				WriteToLog("Dep library %s, hash=%s \n", library.c_str(), hash.c_str());
 			}
+			CacheFileWriteCount(depCacheFile, (uint32_t)DepInputHashes.size());
+			for (auto iter : DepInputHashes)
+			{
+				// TODO: add sanity check that input file contents are still the same.
+				const char* inputPath = iter.first.c_str();
+				md5::Digest& digest = iter.second;
+				std::string hashString = md5::DigestToString(&digest);
+
+				CacheFileWriteFileInfo(depCacheFile, inputPath, digest);
+
+				WriteToLog("Dep input %s hash=%s \n", inputPath, hashString.c_str());
+			}
+			CacheFileWriteCount(depCacheFile, (uint32_t)DepOutputs.size());
+			for (std::string output : DepOutputs)
+			{
+				HANDLE handle = TrueCreateFileA(output.c_str(), GENERIC_READ, 0,
+					nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+				Assert(handle != INVALID_HANDLE_VALUE, "Failed to open output file %s",
+					output.c_str());
+
+				md5::Digest digest = ComputeFileHash(handle);
+				std::string hash = md5::DigestToString(&digest);
+
+				CloseHandle(handle);
+
+				CacheFileWriteFileInfo(depCacheFile, output.c_str(), digest);
+
+				WriteToLog("Dep output %s, hash=%s \n", output.c_str(), hash.c_str());
+			}
+
+			CloseHandle(depCacheFile);
 		}
 		else
 		{
 			WriteToLog("Dep failed, see log above. No results cache will be written.\n");
+			printf("%s: Dep failed, see log file %s for info.\n", DllName, 
+				LogFilePath.c_str());
 		}
 
 		CloseHandle(LogFileHandle);

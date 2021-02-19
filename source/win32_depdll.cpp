@@ -28,6 +28,9 @@ std::string LogFilePath;
 HANDLE LogFileHandle = INVALID_HANDLE_VALUE;
 bool DepSuccess = true;
 
+bool DepVerbose;
+bool DepForce;
+
 std::string DepCachePath;
 std::string DepCommandStatePath;
 std::string WindowsSystemPath;
@@ -60,18 +63,21 @@ static BOOL (WINAPI * TrueCreateProcessW)(LPCWSTR, LPWSTR, LPSECURITY_ATTRIBUTES
 
 void WriteToLog(const char *format, ...)
 {
-	Assert(LogFileHandle != INVALID_HANDLE_VALUE, "Log file wasn't created yet?");
-	char LogBuffer[2048];
+	if (DepVerbose)
+	{
+		Assert(LogFileHandle != INVALID_HANDLE_VALUE, "Log file wasn't created yet?");
+		char LogBuffer[2048];
 
-	va_list ptr;
-	va_start(ptr,format);
-	vsprintf_s(LogBuffer, sizeof(LogBuffer), format, ptr);
-	va_end(ptr);
+		va_list ptr;
+		va_start(ptr,format);
+		vsprintf_s(LogBuffer, sizeof(LogBuffer), format, ptr);
+		va_end(ptr);
 
-	DWORD bytesWritten;
-	BOOL result = TrueWriteFile(LogFileHandle, LogBuffer, (DWORD)strlen(LogBuffer),
-		&bytesWritten, nullptr);
-	Assert(result, "Failed to write file, last error = %d", GetLastError());
+		DWORD bytesWritten;
+		BOOL result = TrueWriteFile(LogFileHandle, LogBuffer, (DWORD)strlen(LogBuffer),
+			&bytesWritten, nullptr);
+		Assert(result, "Failed to write file, last error = %d", GetLastError());
+	}
 }
 
 std::string ConvertWideString(LPCWSTR string)
@@ -579,50 +585,61 @@ BOOL WINAPI DllMain(
 
 		DepCachePath = DirectoryPath + "depcache\\";
 
-		SYSTEMTIME time;
-		GetLocalTime(&time);
-
-		char tmpBuffer[128];
-		snprintf(tmpBuffer, sizeof(tmpBuffer), "%d_%.2d_%.2d__%.2d_%.2d_%.2d.log",
-			time.wYear,	time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond);
-		LogFilePath = DepCachePath + tmpBuffer;
-		
-		LogFileHandle = TrueCreateFileA(LogFilePath.c_str(), GENERIC_WRITE, 0,
-			nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
-		if (LogFileHandle == INVALID_HANDLE_VALUE)
-		{ 
-			int iteration = 1;
-			DWORD lastError = GetLastError();
-			while (LogFileHandle == INVALID_HANDLE_VALUE && 
-				lastError == ERROR_FILE_EXISTS)
-			{
-				snprintf(tmpBuffer, sizeof(tmpBuffer), "%d_%.2d_%.2d__%.2d_%.2d_%.2d__%d.log",
-					time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond,
-					iteration);
-				LogFilePath = DepCachePath + tmpBuffer;
-				LogFileHandle = TrueCreateFileA(LogFilePath.c_str(), GENERIC_WRITE, 0, nullptr,
-					CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
-				++iteration;
-			}
-		}
-		Assert(LogFileHandle != INVALID_HANDLE_VALUE, "Failed to create log file %s",
-			LogFilePath.c_str());
-
-		LPSTR commandLine = GetCommandLine();
-		WriteToLog("Invocation: Dll=%s commandLine=%s \n", DllPath.c_str(), commandLine);
-
+		// Extract payload data from the detours section.
 		char commandStateHash[32+1];
 		HMODULE next = NULL;
 		while ((next = DetourEnumerateModules(next)) != NULL)
 		{
 			DWORD payloadSize = 0;
-			void* payload = DetourFindPayload(next, GuidDep, &payloadSize);
+			unsigned char* payload = (unsigned char*)DetourFindPayload(next, GuidDep, 
+				&payloadSize);
 			if (!payload)
 				continue;
-			memcpy(commandStateHash, payload, 32);
+			uint32_t flags;
+			Assert(payloadSize == sizeof(flags) + 32, "Invalid payload, size = %d", payloadSize);
+			flags = *((uint32_t*)payload);
+			DepVerbose = (flags & 1) != 0;
+			DepForce = (flags & 2) != 0;
+			memcpy(commandStateHash, payload + sizeof(flags), 32);
 			commandStateHash[32] = 0;
 			break;
 		}
+
+		if (DepVerbose)
+		{
+			SYSTEMTIME time;
+			GetLocalTime(&time);
+
+			char tmpBuffer[128];
+			snprintf(tmpBuffer, sizeof(tmpBuffer), "%d_%.2d_%.2d__%.2d_%.2d_%.2d.log",
+				time.wYear,	time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond);
+			LogFilePath = DepCachePath + tmpBuffer;
+			
+			LogFileHandle = TrueCreateFileA(LogFilePath.c_str(), GENERIC_WRITE, 0,
+				nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+			if (LogFileHandle == INVALID_HANDLE_VALUE)
+			{ 
+				int iteration = 1;
+				DWORD lastError = GetLastError();
+				while (LogFileHandle == INVALID_HANDLE_VALUE && 
+					lastError == ERROR_FILE_EXISTS)
+				{
+					snprintf(tmpBuffer, sizeof(tmpBuffer), "%d_%.2d_%.2d__%.2d_%.2d_%.2d__%d.log",
+						time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond,
+						iteration);
+					LogFilePath = DepCachePath + tmpBuffer;
+					LogFileHandle = TrueCreateFileA(LogFilePath.c_str(), GENERIC_WRITE, 0, nullptr,
+						CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+					++iteration;
+				}
+			}
+			Assert(LogFileHandle != INVALID_HANDLE_VALUE, "Failed to create log file %s",
+				LogFilePath.c_str());
+		}
+
+		LPSTR commandLine = GetCommandLine();
+		WriteToLog("Invocation: Dll=%s commandLine=%s \n", DllPath.c_str(), commandLine);
+
 
 		DepCommandStatePath = DepCachePath + commandStateHash + "\\";
 
@@ -708,11 +725,21 @@ BOOL WINAPI DllMain(
 		else
 		{
 			WriteToLog("Dep failed, see log above. No results cache will be written.\n");
-			printf("%s: Dep failed, see log file %s for info.\n", DllName, 
-				LogFilePath.c_str());
+			if (DepVerbose)
+			{
+				printf("%s: Dep failed, see log file %s for info.\n", DllName, 
+					LogFilePath.c_str());
+			}
+			else
+			{
+				printf("%s: Dep failed, use verbose flag (/v) for info.\n", DllName);
+			}
 		}
 
-		CloseHandle(LogFileHandle);
+		if (DepVerbose)
+		{
+			CloseHandle(LogFileHandle);
+		}
 	}
 	return TRUE;
 }

@@ -1,11 +1,12 @@
 #include "depcommon.h"
 
 #include <string>
+#include <strsafe.h>
 #include <windows.h>
+
 #include <detours.h>
 
 // Source files
-#include "win32_processutils.cpp"
 #include "md5.cpp"
 
 //////////////////////////////////////////////////////////////////////////////
@@ -16,7 +17,7 @@ void PrintUsage(void)
 		   "	dep.exe [options] [command line]\n"
 		   "Options:\n"
 		   "	/f		: Force, perform the command even if up to date.\n"
-		   "	/v		: Verbose, display memory at start.\n"
+		   "	/v		: Verbose, print info to console and log file.\n"
 		   "	/?		: This help screen.\n");
 }
 
@@ -88,6 +89,7 @@ md5::Digest ComputeFileHash(HANDLE handle)
 	return digest;
 }
 
+#define VerbosePrint(format, ...) if (Verbose) { printf(format, __VA_ARGS__); } else {}
 
 //////////////////////////////////////////////////////////////////////// main.
 //
@@ -111,6 +113,8 @@ int CDECL main(int argc, char **argv)
 				Force = true;
 				break;
 			case '?':                                     // Help
+			case 'h':
+			case 'H':
 				NeedHelp = true;
 				break;
 			default:
@@ -155,32 +159,6 @@ int CDECL main(int argc, char **argv)
 			DepExePath.c_str());
 		DirectoryPath = DepExePath.substr(0, exePos);
 		DllPath = DirectoryPath + DllName;
-	}
-
-	if (Verbose)
-	{
-		HMODULE hDll = LoadLibraryExA(DllPath.c_str(), NULL, DONT_RESOLVE_DLL_REFERENCES);
-		if (hDll == NULL)
-		{
-			printf("dep.exe: Error: %s failed to load (error %d).\n",
-				DllPath.c_str(),
-				GetLastError());
-			return 9003;
-		}
-
-		ExportContext ec;
-		ec.HasOrdinal1 = FALSE;
-		ec.NumExports = 0;
-		DetourEnumerateExports(hDll, &ec, ExportCallback);
-		FreeLibrary(hDll);
-
-		if (!ec.HasOrdinal1)
-		{
-			printf("dep.exe: Error: %s does not export ordinal #1.\n",
-				DllPath.c_str());
-			printf("             See help entry DetourCreateProcessWithDllEx in Detours.chm.\n");
-			return 9004;
-		}
 	}
 
 	// create the dep cache directory if it doesn't already exist
@@ -336,7 +314,7 @@ int CDECL main(int argc, char **argv)
 						if (memcmp(currHash.bytes, prevHash.bytes, sizeof(currHash.bytes)) != 0)
 						{
 							ExecuteProcess = true;
-							printf("dep.exe: %s didn't match previous state, rebuild required.\n",
+							VerbosePrint("dep.exe: %s didn't match previous state, rebuild required.\n",
 								filePath.c_str());
 							break;
 						}
@@ -348,7 +326,7 @@ int CDECL main(int argc, char **argv)
 							filePath.c_str(), GetLastError());
 
 						ExecuteProcess = true;
-						printf("dep.exe: Couldn't find dependency %s, rebuild required.\n",
+						VerbosePrint("dep.exe: Couldn't find dependency %s, rebuild required.\n",
 							filePath.c_str());
 						break;
 					}
@@ -357,7 +335,7 @@ int CDECL main(int argc, char **argv)
 			else
 			{
 				ExecuteProcess = true;
-				printf("dep.exe: Dep cache file version out of date, rebuild required.\n");
+				VerbosePrint("dep.exe: Dep cache file version out of date, rebuild required.\n");
 			}
 
 			free(depCacheContents);
@@ -374,7 +352,7 @@ int CDECL main(int argc, char **argv)
 	// Execute the command, if necessary. 
 	if (ExecuteProcess || Force)
 	{
-		printf("dep.exe: Starting: '%s', md5=%s\n", szCommand, subFolder.c_str());
+		VerbosePrint("dep.exe: Starting: '%s', md5=%s\n", szCommand, subFolder.c_str());
 		fflush(stdout);
 
 		DWORD dwFlags = CREATE_DEFAULT_ERROR_MODE | CREATE_SUSPENDED;
@@ -392,15 +370,16 @@ int CDECL main(int argc, char **argv)
 			ExitProcess(9009);
 		}
 
-		if (Verbose) {
-			DumpProcess(pi.hProcess);
-		}
-
 		// Copy payload to DLL
 		{
-			char* payload = (char*)subFolder.c_str();
-			BOOL success = DetourCopyPayloadToProcess(pi.hProcess, GuidDep, payload, 32);
+			uint32_t flags = Verbose << 0 | Force << 1;
+			DWORD payloadSize = sizeof(flags) + 32;
+			unsigned char* payload = (unsigned char*)malloc(payloadSize);
+			*((uint32_t*)payload) = flags;
+			memcpy(payload + sizeof(flags), subFolder.c_str(), 32);
+			BOOL success = DetourCopyPayloadToProcess(pi.hProcess, GuidDep, payload, payloadSize);
 			Assert(success, "Failed to copy payload, error=%d", GetLastError());
+			free(payload);
 		}
 
 		ResumeThread(pi.hThread);
@@ -413,7 +392,7 @@ int CDECL main(int argc, char **argv)
 			return 9010;
 		}
 
-		printf("dep.exe: Process exited with return value %d\n", dwResult);
+		VerbosePrint("dep.exe: Process exited with return value %d\n", dwResult);
 
 		// If the process returned a failure exit code, delete the cache file as it is invalid.
 		if (dwResult != 0)
@@ -428,7 +407,7 @@ int CDECL main(int argc, char **argv)
 	}
 	else
 	{
-		printf("dep.exe: Skipping invoking command, all files up to date.\n");
+		VerbosePrint("dep.exe: Skipping invoking command, all files up to date.\n");
 		return 0;
 	}
 }

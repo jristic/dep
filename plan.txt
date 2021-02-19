@@ -9,8 +9,8 @@
 
 
 TODOs:
-* Need to either handle it properly or not support it and error out if someone calls SetCurrentDirectory
-* Make the verbose flag control printing to the log. 
+* Need to either handle SetCurrentDirectory properly or not support it and error out if it is called
+* add a utility or option in dep.exe to print the contents of a depcache file
 * make things like dep cache location configurable via a dep.cfg that sits in the exe/dll folder
 * Add the ability to ignore certain files or file types via dep.cfg
 * Add some debug ability to check for hash collisions. 

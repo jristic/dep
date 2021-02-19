@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <winbase.h>
 #include <psapi.h>
+#include <shlwapi.h>
 #include <detours.h>
 #include <utility>
 #include <string>
@@ -29,6 +30,7 @@ bool DepSuccess = true;
 
 std::string DepCachePath;
 std::string DepCommandStatePath;
+std::string WindowsSystemPath;
 
 std::mutex DepInputLock;
 std::map<std::string, md5::Digest> DepInputHashes;
@@ -310,6 +312,16 @@ void ProcessLibrary(HMODULE module)
 {
 	std::string libPath = GetLibraryPath(module);
 
+	// Don't include windows system DLLs. They don't affect results that we care 
+	//	about, and they use a directory redirect that is opaque to us so it's hard
+	//	to correctly compute their file state between 32/64-bit processes. 
+	bool skipDll = StrStrIA(libPath.c_str(), WindowsSystemPath.c_str()) != nullptr;
+
+	if (skipDll)
+	{
+		WriteToLog("Skipping library %s \n", libPath.c_str());
+	}
+	else
 	{
 		const std::lock_guard<std::mutex> lock(DepLibraryLock);
 		DepLibraries.insert(libPath);
@@ -377,7 +389,7 @@ HMODULE WINAPI InterceptLoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, DWOR
 	if ((dwFlags & LOAD_LIBRARY_AS_DATAFILE) != 0 ||
 		(dwFlags & LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE) != 0)
 	{
-		WriteToLog("Unsupported loadlibrary, dep failure");
+		WriteToLog("Unsupported loadlibrary, dep failure.\n");
 		DepSuccess = false;
 		SetLastError(errorToPreserve);
 		return module;
@@ -407,7 +419,7 @@ HMODULE WINAPI InterceptLoadLibraryExA(LPCSTR lpLibFileName, HANDLE hFile, DWORD
 	if ((dwFlags & LOAD_LIBRARY_AS_DATAFILE) != 0 ||
 		(dwFlags & LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE) != 0)
 	{
-		WriteToLog("Unsupported loadlibrary, dep failure");
+		WriteToLog("Unsupported loadlibrary, dep failure'\n");
 		DepSuccess = false;
 		SetLastError(errorToPreserve);
 		return module;
@@ -503,7 +515,7 @@ void DllDetoursDetach()
 	DetourTransactionCommit();
 }
 
-void CacheFileWriteCount(HANDLE file, uint32_t count)
+void CacheFileWriteUint(HANDLE file, uint32_t count)
 {
 	DWORD bytesWritten;
 	BOOL success = TrueWriteFile(file, &count, sizeof(count), &bytesWritten, NULL);
@@ -616,6 +628,18 @@ BOOL WINAPI DllMain(
 
 		WriteToLog("Command state hash: %s \n", commandStateHash);
 
+		// Find the system directory
+		{
+			char PathBuffer[1024];
+			UINT copiedBytes = GetSystemDirectory(PathBuffer, sizeof(PathBuffer));
+			Assert(copiedBytes > 0, "Failed to get system directory, error=%d", 
+				GetLastError())
+			Assert(copiedBytes <= sizeof(PathBuffer), 
+				"Buffer too short for system directory path, chars=%d", copiedBytes);
+			WindowsSystemPath = std::string(PathBuffer);
+			WriteToLog("System directory: %s\n", PathBuffer);
+		}
+
 		DllDetoursAttach();
 	}
 	else if (fdwReason == DLL_PROCESS_DETACH)
@@ -631,7 +655,10 @@ BOOL WINAPI DllMain(
 			Assert(depCacheFile != INVALID_HANDLE_VALUE, "Failed to create log file %s",
 				depCachePath.c_str());
 
-			CacheFileWriteCount(depCacheFile, (uint32_t)DepLibraries.size());
+			CacheFileWriteUint(depCacheFile, DepCacheVersion);
+
+			size_t fileCount = DepLibraries.size() + DepInputHashes.size() + DepOutputs.size(); 
+			CacheFileWriteUint(depCacheFile, (uint32_t)fileCount);
 			for (std::string library : DepLibraries)
 			{
 				HANDLE handle = TrueCreateFileA(library.c_str(), GENERIC_READ, 0,
@@ -648,7 +675,6 @@ BOOL WINAPI DllMain(
 
 				WriteToLog("Dep library %s, hash=%s \n", library.c_str(), hash.c_str());
 			}
-			CacheFileWriteCount(depCacheFile, (uint32_t)DepInputHashes.size());
 			for (auto iter : DepInputHashes)
 			{
 				// TODO: add sanity check that input file contents are still the same.
@@ -660,7 +686,6 @@ BOOL WINAPI DllMain(
 
 				WriteToLog("Dep input %s hash=%s \n", inputPath, hashString.c_str());
 			}
-			CacheFileWriteCount(depCacheFile, (uint32_t)DepOutputs.size());
 			for (std::string output : DepOutputs)
 			{
 				HANDLE handle = TrueCreateFileA(output.c_str(), GENERIC_READ, 0,

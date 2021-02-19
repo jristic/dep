@@ -1,6 +1,7 @@
-#include <stdio.h>
-#include <stdarg.h>
 #include <guiddef.h>
+#include <stdarg.h>
+#include <stdint.h>
+#include <stdio.h>
 
 void SPrint(char* buf, int buf_size, const char *str, ...)
 {
@@ -47,3 +48,5 @@ const GUID GuidDep = {
     0xd8e2dc69, 0x3004, 0x453e,
     {0x94, 0x15, 0x19, 0x0e, 0x79, 0xe8, 0x93, 0x52}
 };
+
+const uint32_t DepCacheVersion = 1;

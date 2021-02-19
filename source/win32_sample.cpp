@@ -13,14 +13,16 @@ int main(int argc, char* argv[])
 	FILE* outFile = fopen(argv[2], "w");
 	if (outFile==NULL)
 	{
-		fputs("Output file error\n", stderr);
+		fprintf(stderr, "Output file error %d\n", errno);
+		perror("Error printed by perror");
 		exit(2);
 	}
 
 	FILE * inFile = fopen ( argv[1] , "r" );
 	if (inFile == NULL) 
 	{
-		fputs("Input file error\n", stderr);
+		fprintf(stderr, "Input file error %d\n", errno);
+		perror("Error printed by perror");
 		exit(3);
 	}
 

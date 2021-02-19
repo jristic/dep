@@ -32,6 +32,63 @@ void MakeDirectory(std::string& directory)
 	}
 }
 
+uint32_t CacheFileReadUint(unsigned char*& fileData)
+{
+	uint32_t count = *((uint32_t*)fileData);
+	fileData += sizeof(count);
+	return count;
+}
+
+md5::Digest CacheFileReadFileInfo(unsigned char*& fileData, std::string& outPath)
+{
+	uint32_t pathLength = CacheFileReadUint(fileData);
+
+	outPath = std::string((char*)fileData, pathLength);
+	fileData += pathLength;
+
+	md5::Digest digest;
+	memcpy(digest.bytes, fileData, sizeof(digest.bytes));
+	fileData += sizeof(digest.bytes);
+
+	return digest;
+}
+
+md5::Digest ComputeFileHash(HANDLE handle)
+{
+	uint32_t readSize = 4*1024*1024; // 4 MB
+	unsigned char* readBuffer = (unsigned char*)malloc(readSize);
+	uint32_t bytesRead = 0;
+
+	LARGE_INTEGER large;
+	BOOL success = GetFileSizeEx(handle, &large);
+	Assert(success, "Failed to get file size, error=%d", GetLastError());
+	Assert(large.QuadPart < UINT_MAX, "File is too large, not supported");
+	uint32_t bytesToRead = large.LowPart;
+
+	md5::Context md5Ctx;
+	md5::Digest digest;
+	md5::Init(&md5Ctx);
+
+	while (bytesRead < bytesToRead)
+	{
+		OVERLAPPED ovr = {};
+		ovr.Offset = bytesRead;
+		DWORD bytesReadThisIteration;
+		success = ReadFile(handle, readBuffer, min(bytesToRead, readSize), 
+			&bytesReadThisIteration, &ovr);
+		Assert(success, "Failed to read file, error=%d", GetLastError());
+		bytesRead += bytesReadThisIteration;
+		md5::Update(&md5Ctx, readBuffer, bytesReadThisIteration);
+	}
+
+	md5::Final(&digest, &md5Ctx);
+
+	free(readBuffer);
+
+	return digest;
+}
+
+
 //////////////////////////////////////////////////////////////////////// main.
 //
 int CDECL main(int argc, char **argv)
@@ -140,6 +197,7 @@ int CDECL main(int argc, char **argv)
 	CHAR szExe[1024];
 	CHAR szFullExe[1024] = "\0";
 	CHAR szCurrentDirectory[1024] = "\0";
+	CHAR szDllPath[1024] = "\0";
 	PCHAR pszFileExe = NULL;
 
 	ZeroMemory(&si, sizeof(si));
@@ -157,6 +215,9 @@ int CDECL main(int argc, char **argv)
 		}
 	}
 
+	StringCchCopyA(szDllPath, sizeof(szDllPath), DllPath.c_str());
+
+	// Find the full path of the exe being invoked. 
 	{
 		DWORD copiedBytes = SearchPathA(NULL, szExe, ".exe", ARRAYSIZE(szFullExe),
 			szFullExe, &pszFileExe);
@@ -224,51 +285,150 @@ int CDECL main(int argc, char **argv)
 	std::string CommandStatePath = DepCachePath + subFolder + "\\";
 	MakeDirectory(CommandStatePath);
 
-	printf("dep.exe: Starting: '%s', md5=%s\n", szCommand, subFolder.c_str());
-	fflush(stdout);
+	std::string depCacheFilePath = CommandStatePath + "latest.dep";
 
-	DWORD dwFlags = CREATE_DEFAULT_ERROR_MODE | CREATE_SUSPENDED;
+	bool ExecuteProcess = false;
 
-	LPCSTR pszDllPath = DllPath.c_str();
-
-	SetLastError(0);
-	if (!DetourCreateProcessWithDllsA(szFullExe[0] ? szFullExe : NULL, szCommand,
-		NULL, NULL, TRUE, dwFlags, NULL, NULL, &si, &pi, 1, &pszDllPath, NULL))
+	if (!Force)
 	{
-		DWORD dwError = GetLastError();
-		printf("dep.exe: DetourCreateProcessWithDllEx failed: %d\n", dwError);
-		if (dwError == ERROR_INVALID_HANDLE) {
-#if DETOURS_64BIT
-			printf("dep.exe: Can't detour a 32-bit target process from a 64-bit parent process.\n");
-#else
-			printf("dep.exe: Can't detour a 64-bit target process from a 32-bit parent process.\n");
-#endif
+		// Read the cache file containing the file info for the most recent invocation,
+		//	and if the current state of any file is different from that then we need to
+		//	rebuild. 
+		HANDLE depCacheFile = CreateFile(depCacheFilePath.c_str(), GENERIC_READ, 0,
+			nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+		if (depCacheFile != INVALID_HANDLE_VALUE)
+		{
+			LARGE_INTEGER large;
+			BOOL success = GetFileSizeEx(depCacheFile, &large);
+			Assert(success, "Failed to get file size, error=%d", GetLastError());
+			Assert(large.QuadPart < UINT_MAX, "File is too large, not supported");
+
+			uint32_t fileSize = large.LowPart;
+
+			unsigned char* depCacheContents = (unsigned char*)malloc(fileSize);
+
+			DWORD bytesRead;
+			success = ReadFile(depCacheFile, depCacheContents, fileSize, &bytesRead,
+				nullptr);
+			Assert(success, "Failed to read file, error=%d", GetLastError());
+			Assert(bytesRead == fileSize, "Didn't read full file, error=%d ",
+				GetLastError());
+
+			CloseHandle(depCacheFile);
+
+			unsigned char* fileReadPtr = depCacheContents;
+
+			uint32_t version = CacheFileReadUint(fileReadPtr);
+
+			if (version == DepCacheVersion)
+			{
+				uint32_t fileCount = CacheFileReadUint(fileReadPtr);
+				for (uint32_t i = 0 ; i < fileCount ; ++i)
+				{
+					std::string filePath;
+					md5::Digest prevHash = CacheFileReadFileInfo(fileReadPtr, filePath);
+					HANDLE fileHandle = CreateFile(filePath.c_str(), GENERIC_READ, 0,
+						nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+					if (fileHandle != INVALID_HANDLE_VALUE)
+					{
+						md5::Digest currHash = ComputeFileHash(fileHandle);
+						CloseHandle(fileHandle);
+						if (memcmp(currHash.bytes, prevHash.bytes, sizeof(currHash.bytes)) != 0)
+						{
+							ExecuteProcess = true;
+							printf("dep.exe: %s didn't match previous state, rebuild required.\n",
+								filePath.c_str());
+							break;
+						}
+					}
+					else
+					{
+						Assert(GetLastError() == ERROR_FILE_NOT_FOUND,
+							"Opening cache file %s failed unexpectedly, error=%d",
+							filePath.c_str(), GetLastError());
+
+						ExecuteProcess = true;
+						printf("dep.exe: Couldn't find dependency %s, rebuild required.\n",
+							filePath.c_str());
+						break;
+					}
+				}
+			}
+			else
+			{
+				ExecuteProcess = true;
+				printf("dep.exe: Dep cache file version out of date, rebuild required.\n");
+			}
+
+			free(depCacheContents);
 		}
-		ExitProcess(9009);
+		else
+		{
+			Assert(GetLastError() == ERROR_FILE_NOT_FOUND,
+				"Opening cache file %s failed unexpectedly, error=%d",
+				depCacheFilePath.c_str(), GetLastError());
+			ExecuteProcess = true;
+		}
 	}
 
-	if (Verbose) {
-		DumpProcess(pi.hProcess);
-	}
-
-	// Copy payload to DLL
+	// Execute the command, if necessary. 
+	if (ExecuteProcess || Force)
 	{
-		char* payload = (char*)subFolder.c_str();
-		BOOL success = DetourCopyPayloadToProcess(pi.hProcess, GuidDep, payload, 32);
-		Assert(success, "Failed to copy payload, error=%d", GetLastError());
+		printf("dep.exe: Starting: '%s', md5=%s\n", szCommand, subFolder.c_str());
+		fflush(stdout);
+
+		DWORD dwFlags = CREATE_DEFAULT_ERROR_MODE | CREATE_SUSPENDED;
+
+		LPCSTR pszDllPath = szDllPath;
+
+		SetLastError(0);
+		if (!DetourCreateProcessWithDllsA(szFullExe[0] ? szFullExe : NULL, szCommand,
+			NULL, NULL, TRUE, dwFlags, NULL, NULL, &si, &pi, 1, &pszDllPath, NULL))
+		{
+			DWORD dwError = GetLastError();
+			printf("dep.exe: DetourCreateProcessWithDllEx failed: %d\n", dwError);
+			if (dwError == ERROR_INVALID_HANDLE)
+				printf("dep.exe: Mismatched 32/64 bitness between parent and created process.\n");
+			ExitProcess(9009);
+		}
+
+		if (Verbose) {
+			DumpProcess(pi.hProcess);
+		}
+
+		// Copy payload to DLL
+		{
+			char* payload = (char*)subFolder.c_str();
+			BOOL success = DetourCopyPayloadToProcess(pi.hProcess, GuidDep, payload, 32);
+			Assert(success, "Failed to copy payload, error=%d", GetLastError());
+		}
+
+		ResumeThread(pi.hThread);
+
+		WaitForSingleObject(pi.hProcess, INFINITE);
+
+		DWORD dwResult = 0;
+		if (!GetExitCodeProcess(pi.hProcess, &dwResult)) {
+			printf("dep.exe: GetExitCodeProcess failed: %d\n", GetLastError());
+			return 9010;
+		}
+
+		printf("dep.exe: Process exited with return value %d\n", dwResult);
+
+		// If the process returned a failure exit code, delete the cache file as it is invalid.
+		if (dwResult != 0)
+		{
+			bool success = DeleteFile(depCacheFilePath.c_str());
+			DWORD dwError = GetLastError();
+			Assert(success || dwError == ERROR_FILE_NOT_FOUND, "Failed to delete %s",
+				depCacheFilePath.c_str());
+		}
+
+		return dwResult;
 	}
-
-	ResumeThread(pi.hThread);
-
-	WaitForSingleObject(pi.hProcess, INFINITE);
-
-	DWORD dwResult = 0;
-	if (!GetExitCodeProcess(pi.hProcess, &dwResult)) {
-		printf("dep.exe: GetExitCodeProcess failed: %d\n", GetLastError());
-		return 9010;
+	else
+	{
+		printf("dep.exe: Skipping invoking command, all files up to date.\n");
+		return 0;
 	}
-
-	printf("dep.exe: Process exited with return value %d\n", dwResult);
-
-	return dwResult;
 }

@@ -1,8 +1,7 @@
-* In the exe check if the input signature from the latest written invocation matches the current input signature on disk. If so skip and return the saved return value for the process. 
-	-> if process returns failure code as exit, invalidate/delete cache results
 * Handle subprocess creation
 	-> basically what we do in the dep exe needs to happen from within the dll as well, recursively setting up itself within the next child
 	-> if up to date, instead launch a depskip.exe process which will accept the return value given by the previous invocation and return that to maintain opaque operation to the intercepted process
+	-> May need to hook WaitForSingleObject or GetExitCodeProcess to do post-completion work for the sub-process
 	-> Check if subprocess creation is trying to launch via dep as well. If so, do not attempt to intercept.
 	-> for a process which creates sub-processes, we techincally need to check the state and inputs/outputs of all sub-process creations, and recurse if those sub-processes create more sub-processes. This would get increasingly bad the deeper the recursion of sub-processes. 
 * ...
@@ -10,7 +9,7 @@
 
 
 TODOs:
-* Add a dep version check so that a process is always run again if the previous invocation was performed by a previous version of dep
+* Need to either handle it properly or not support it and error out if someone calls SetCurrentDirectory
 * Make the verbose flag control printing to the log. 
 * make things like dep cache location configurable via a dep.cfg that sits in the exe/dll folder
 * Add the ability to ignore certain files or file types via dep.cfg

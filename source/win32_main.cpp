@@ -1,12 +1,17 @@
-#include "depcommon.h"
-
 #include <string>
 #include <strsafe.h>
 #include <windows.h>
 
 #include <detours.h>
 
+// Internal headers
+#include "depcommon.h"
+#include "fileio.h"
+#include "md5.h"
+
 // Source files
+#include "fileio.cpp"
+#include "cacheformat.cpp"
 #include "md5.cpp"
 
 //////////////////////////////////////////////////////////////////////////////
@@ -19,39 +24,6 @@ void PrintUsage(void)
 		   "	/f		: Force, perform the command even if up to date.\n"
 		   "	/v		: Verbose, print info to console and log file.\n"
 		   "	/?		: This help screen.\n");
-}
-
-void MakeDirectory(std::string& directory)
-{
-	BOOL success = CreateDirectory(directory.c_str(), nullptr);
-	if (!success)
-	{
-		DWORD lastError = GetLastError();
-		Assert(lastError == ERROR_ALREADY_EXISTS, 
-			"failed to create directory %s, error=%d",
-			directory.c_str(), lastError);
-	}
-}
-
-uint32_t CacheFileReadUint(unsigned char*& fileData)
-{
-	uint32_t count = *((uint32_t*)fileData);
-	fileData += sizeof(count);
-	return count;
-}
-
-md5::Digest CacheFileReadFileInfo(unsigned char*& fileData, std::string& outPath)
-{
-	uint32_t pathLength = CacheFileReadUint(fileData);
-
-	outPath = std::string((char*)fileData, pathLength);
-	fileData += pathLength;
-
-	md5::Digest digest;
-	memcpy(digest.bytes, fileData, sizeof(digest.bytes));
-	fileData += sizeof(digest.bytes);
-
-	return digest;
 }
 
 md5::Digest ComputeFileHash(HANDLE handle)
@@ -75,7 +47,7 @@ md5::Digest ComputeFileHash(HANDLE handle)
 		OVERLAPPED ovr = {};
 		ovr.Offset = bytesRead;
 		DWORD bytesReadThisIteration;
-		success = ReadFile(handle, readBuffer, min(bytesToRead, readSize), 
+		success = TrueReadFile(handle, readBuffer, min(bytesToRead, readSize), 
 			&bytesReadThisIteration, &ovr);
 		Assert(success, "Failed to read file, error=%d", GetLastError());
 		bytesRead += bytesReadThisIteration;
@@ -132,40 +104,27 @@ int CDECL main(int argc, char **argv)
 		return 9001;
 	}
 
-
-	char* ExeName = "dep.exe";
-	char* DllName = "dep64.dll";
 	std::string DepExePath;
 	std::string DirectoryPath;
 	std::string DllPath;
 	// Establish the full path to the current exe, its directory, and the dll path
 	{
 		char PathBuffer[2048];
-		int copiedSize = GetModuleFileName(nullptr, PathBuffer, ARRAYSIZE(PathBuffer));
-		if (copiedSize == 0)
-		{
-			printf("dep.exe: Error: failed to get dep exe path. \n");
-			return 9002;
-		}
-		else if (copiedSize == ARRAYSIZE(PathBuffer) && GetLastError() == ERROR_INSUFFICIENT_BUFFER)
-		{
-			printf("dep.exe: Error: buffer too short for dep exe path. \n");
-			return 9002;
-		}
+		fileio::GetModuleFileName(nullptr, PathBuffer, ARRAYSIZE(PathBuffer));
 		DepExePath = PathBuffer;
 
-		size_t exePos = DepExePath.rfind(ExeName);
+		size_t exePos = DepExePath.rfind(DepExeName);
 		Assert(exePos != std::string::npos, "Could not find exe path in string %s",
 			DepExePath.c_str());
 		DirectoryPath = DepExePath.substr(0, exePos);
-		DllPath = DirectoryPath + DllName;
+		DllPath = DirectoryPath + DepDllName;
 	}
 
 	// create the dep cache directory if it doesn't already exist
 	std::string DepCachePath;
 	{
 		DepCachePath = DirectoryPath + "depcache\\";
-		MakeDirectory(DepCachePath);
+		fileio::MakeDirectory(DepCachePath.c_str());
 	}
 
 	//////////////////////////////////////////////////////////////////////////
@@ -175,7 +134,6 @@ int CDECL main(int argc, char **argv)
 	CHAR szExe[1024];
 	CHAR szFullExe[1024] = "\0";
 	CHAR szCurrentDirectory[1024] = "\0";
-	CHAR szDllPath[1024] = "\0";
 	PCHAR pszFileExe = NULL;
 
 	ZeroMemory(&si, sizeof(si));
@@ -192,8 +150,6 @@ int CDECL main(int argc, char **argv)
 			StringCchCatA(szCommand, sizeof(szCommand), " ");
 		}
 	}
-
-	StringCchCopyA(szDllPath, sizeof(szDllPath), DllPath.c_str());
 
 	// Find the full path of the exe being invoked. 
 	{
@@ -217,10 +173,7 @@ int CDECL main(int argc, char **argv)
 	md5::Update(&md5Ctx, (unsigned char*)szCommand, strlen(szCommand));
 	// The exe file contents
 	{
-		HANDLE handle = CreateFile(szFullExe, GENERIC_READ, 0,
-			nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-		Assert(handle != INVALID_HANDLE_VALUE, "Failed to open exe file %s",
-			szFullExe);
+		HANDLE handle = fileio::OpenFileAlways(szFullExe, GENERIC_READ);
 
 		uint32_t readSize = 4*1024*1024; // 4 MB
 		unsigned char* readBuffer = (unsigned char*)malloc(readSize);
@@ -237,7 +190,7 @@ int CDECL main(int argc, char **argv)
 			OVERLAPPED ovr = {};
 			ovr.Offset = bytesRead;
 			DWORD bytesReadThisIteration;
-			success = ReadFile(handle, readBuffer, min(bytesToRead, readSize), 
+			success = TrueReadFile(handle, readBuffer, min(bytesToRead, readSize), 
 				&bytesReadThisIteration, &ovr);
 			Assert(success, "Failed to read file, error=%d", GetLastError());
 			bytesRead += bytesReadThisIteration;
@@ -261,7 +214,7 @@ int CDECL main(int argc, char **argv)
 	// Make a subfolder for this command state
 	std::string subFolder = md5::DigestToString(&digest);
 	std::string CommandStatePath = DepCachePath + subFolder + "\\";
-	MakeDirectory(CommandStatePath);
+	fileio::MakeDirectory(CommandStatePath.c_str());
 
 	std::string depCacheFilePath = CommandStatePath + "latest.dep";
 
@@ -272,8 +225,7 @@ int CDECL main(int argc, char **argv)
 		// Read the cache file containing the file info for the most recent invocation,
 		//	and if the current state of any file is different from that then we need to
 		//	rebuild. 
-		HANDLE depCacheFile = CreateFile(depCacheFilePath.c_str(), GENERIC_READ, 0,
-			nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+		HANDLE depCacheFile = fileio::OpenFileOptional(depCacheFilePath.c_str(), GENERIC_READ);
 		if (depCacheFile != INVALID_HANDLE_VALUE)
 		{
 			LARGE_INTEGER large;
@@ -286,7 +238,7 @@ int CDECL main(int argc, char **argv)
 			unsigned char* depCacheContents = (unsigned char*)malloc(fileSize);
 
 			DWORD bytesRead;
-			success = ReadFile(depCacheFile, depCacheContents, fileSize, &bytesRead,
+			success = TrueReadFile(depCacheFile, depCacheContents, fileSize, &bytesRead,
 				nullptr);
 			Assert(success, "Failed to read file, error=%d", GetLastError());
 			Assert(bytesRead == fileSize, "Didn't read full file, error=%d ",
@@ -296,17 +248,16 @@ int CDECL main(int argc, char **argv)
 
 			unsigned char* fileReadPtr = depCacheContents;
 
-			uint32_t version = CacheFileReadUint(fileReadPtr);
+			uint32_t version = cacheformat::ReadUint(fileReadPtr);
 
 			if (version == DepCacheVersion)
 			{
-				uint32_t fileCount = CacheFileReadUint(fileReadPtr);
+				uint32_t fileCount = cacheformat::ReadUint(fileReadPtr);
 				for (uint32_t i = 0 ; i < fileCount ; ++i)
 				{
 					std::string filePath;
-					md5::Digest prevHash = CacheFileReadFileInfo(fileReadPtr, filePath);
-					HANDLE fileHandle = CreateFile(filePath.c_str(), GENERIC_READ, 0,
-						nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+					md5::Digest prevHash = cacheformat::ReadFileInfo(fileReadPtr, filePath);
+					HANDLE fileHandle = fileio::OpenFileOptional(filePath.c_str(), GENERIC_READ);
 					if (fileHandle != INVALID_HANDLE_VALUE)
 					{
 						md5::Digest currHash = ComputeFileHash(fileHandle);
@@ -321,10 +272,6 @@ int CDECL main(int argc, char **argv)
 					}
 					else
 					{
-						Assert(GetLastError() == ERROR_FILE_NOT_FOUND,
-							"Opening cache file %s failed unexpectedly, error=%d",
-							filePath.c_str(), GetLastError());
-
 						ExecuteProcess = true;
 						VerbosePrint("dep.exe: Couldn't find dependency %s, rebuild required.\n",
 							filePath.c_str());
@@ -342,9 +289,9 @@ int CDECL main(int argc, char **argv)
 		}
 		else
 		{
-			Assert(GetLastError() == ERROR_FILE_NOT_FOUND,
-				"Opening cache file %s failed unexpectedly, error=%d",
-				depCacheFilePath.c_str(), GetLastError());
+			// No cache file exists, either this command state hasn't been run before
+			//	or it returned an error on the last invocation. 
+			VerbosePrint("dep.exe: No cached state for current command state, rebuild required.\n");
 			ExecuteProcess = true;
 		}
 	}
@@ -357,11 +304,9 @@ int CDECL main(int argc, char **argv)
 
 		DWORD dwFlags = CREATE_DEFAULT_ERROR_MODE | CREATE_SUSPENDED;
 
-		LPCSTR pszDllPath = szDllPath;
-
 		SetLastError(0);
-		if (!DetourCreateProcessWithDllsA(szFullExe[0] ? szFullExe : NULL, szCommand,
-			NULL, NULL, TRUE, dwFlags, NULL, NULL, &si, &pi, 1, &pszDllPath, NULL))
+		if (!DetourCreateProcessWithDllEx(szFullExe[0] ? szFullExe : NULL, szCommand,
+			NULL, NULL, TRUE, dwFlags, NULL, NULL, &si, &pi, DllPath.c_str(), TrueCreateProcessA))
 		{
 			DWORD dwError = GetLastError();
 			printf("dep.exe: DetourCreateProcessWithDllEx failed: %d\n", dwError);
@@ -387,7 +332,8 @@ int CDECL main(int argc, char **argv)
 		WaitForSingleObject(pi.hProcess, INFINITE);
 
 		DWORD dwResult = 0;
-		if (!GetExitCodeProcess(pi.hProcess, &dwResult)) {
+		if (!GetExitCodeProcess(pi.hProcess, &dwResult)) 
+		{
 			printf("dep.exe: GetExitCodeProcess failed: %d\n", GetLastError());
 			return 9010;
 		}
@@ -397,10 +343,7 @@ int CDECL main(int argc, char **argv)
 		// If the process returned a failure exit code, delete the cache file as it is invalid.
 		if (dwResult != 0)
 		{
-			bool success = DeleteFile(depCacheFilePath.c_str());
-			DWORD dwError = GetLastError();
-			Assert(success || dwError == ERROR_FILE_NOT_FOUND, "Failed to delete %s",
-				depCacheFilePath.c_str());
+			fileio::DeleteFile(depCacheFilePath.c_str());
 		}
 
 		return dwResult;

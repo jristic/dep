@@ -1,7 +1,4 @@
-#include "depcommon.h"
-
 #include <windows.h>
-#include <winbase.h>
 #include <psapi.h>
 #include <shlwapi.h>
 #include <detours.h>
@@ -11,16 +8,16 @@
 #include <map>
 #include <set>
 
+// Internal headers
+#include "depcommon.h"
+#include "fileio.h"
+#include "md5.h"
+
 // Source files
+#include "fileio.cpp"
+#include "cacheformat.cpp"
 #include "md5.cpp"
 
-#if defined(_WIN64)
-const char* DllName = "dep64.dll";
-#elif defined(_WIN32)
-const char* DllName = "dep32.dll";
-#else
-	#error
-#endif
 
 static void DummyDllIdentifier() { return; }
 
@@ -44,21 +41,6 @@ std::set<std::string> DepLibraries;
 std::mutex DepOutputLock;
 std::set<std::string> DepOutputs;
 
-//
-// Target pointers for the original functions.
-//
-static HANDLE (WINAPI * TrueCreateFileW)(LPCWSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE) = CreateFileW;
-static HANDLE (WINAPI * TrueCreateFileA)(LPCSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE) = CreateFileA;
-static BOOL (WINAPI * TrueReadFile)(HANDLE, LPVOID, DWORD, LPDWORD, LPOVERLAPPED) = ReadFile;
-static BOOL (WINAPI * TrueWriteFile)(HANDLE, LPCVOID, DWORD, LPDWORD, LPOVERLAPPED) = WriteFile;
-static HMODULE (WINAPI * TrueLoadLibraryW)(LPCWSTR) = LoadLibraryW;
-static HMODULE (WINAPI * TrueLoadLibraryA)(LPCSTR) = LoadLibraryA;
-static HMODULE (WINAPI * TrueLoadLibraryExW)(LPCWSTR,HANDLE,DWORD) = LoadLibraryExW;
-static HMODULE (WINAPI * TrueLoadLibraryExA)(LPCSTR,HANDLE,DWORD) = LoadLibraryExA;
-static BOOL (WINAPI * TrueCreateProcessA)(LPCSTR, LPSTR, LPSECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES,
-	BOOL, DWORD, LPVOID, LPCSTR, LPSTARTUPINFOA, LPPROCESS_INFORMATION) = CreateProcessA;
-static BOOL (WINAPI * TrueCreateProcessW)(LPCWSTR, LPWSTR, LPSECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES,
-	BOOL, DWORD, LPVOID, LPCWSTR, LPSTARTUPINFOW, LPPROCESS_INFORMATION) = CreateProcessW;
 
 
 void WriteToLog(const char *format, ...)
@@ -73,10 +55,7 @@ void WriteToLog(const char *format, ...)
 		vsprintf_s(LogBuffer, sizeof(LogBuffer), format, ptr);
 		va_end(ptr);
 
-		DWORD bytesWritten;
-		BOOL result = TrueWriteFile(LogFileHandle, LogBuffer, (DWORD)strlen(LogBuffer),
-			&bytesWritten, nullptr);
-		Assert(result, "Failed to write file, last error = %d", GetLastError());
+		fileio::WriteFile(LogFileHandle, LogBuffer, (u32)strlen(LogBuffer));
 	}
 }
 
@@ -297,16 +276,7 @@ std::string GetLibraryPath(HMODULE module)
 {
 	DWORD PathBufferSize = 2048;
 	char* PathBuffer = (char*)malloc(PathBufferSize);
-	DWORD copiedSize = GetModuleFileName(module, PathBuffer, PathBufferSize);
-	if (copiedSize == 0)
-	{
-		Assert(false, "depdll: Error: failed to get dep dll path. \n");
-	}
-	else if (copiedSize == PathBufferSize &&
-		GetLastError() == ERROR_INSUFFICIENT_BUFFER)
-	{
-		Assert(false, "depdll: Error: buffer too short for dep dll path. \n");
-	}
+	fileio::GetModuleFileName(module, PathBuffer, PathBufferSize);
 
 	std::string libPath = PathBuffer;
 	free(PathBuffer);
@@ -521,33 +491,6 @@ void DllDetoursDetach()
 	DetourTransactionCommit();
 }
 
-void CacheFileWriteUint(HANDLE file, uint32_t count)
-{
-	DWORD bytesWritten;
-	BOOL success = TrueWriteFile(file, &count, sizeof(count), &bytesWritten, NULL);
-	Assert(success, "Failed to write file");
-	Assert(bytesWritten == sizeof(count), "Failed to write full count");
-}
-
-void CacheFileWriteFileInfo(HANDLE file, const char* path, md5::Digest& hash)
-{
-	uint32_t pathLength = (uint32_t)strlen(path);
-
-	DWORD bytesWritten;
-
-	BOOL success = TrueWriteFile(file, &pathLength, sizeof(pathLength), &bytesWritten, NULL);
-	Assert(success, "Failed to write file");
-	Assert(bytesWritten == sizeof(pathLength), "Failed to write full amount");
-
-	success = TrueWriteFile(file, path, pathLength, &bytesWritten, NULL);
-	Assert(success, "Failed to write file");
-	Assert(bytesWritten == pathLength, "Failed to write full amount");
-
-	success = TrueWriteFile(file, hash.bytes, sizeof(hash.bytes), &bytesWritten, NULL);
-	Assert(success, "Failed to write file");
-	Assert(bytesWritten == sizeof(hash.bytes), "Failed to write full amount");
-}
-
 BOOL WINAPI DllMain(
 	_In_ HINSTANCE hinstDLL,
 	_In_ DWORD     fdwReason,
@@ -578,7 +521,7 @@ BOOL WINAPI DllMain(
 
 		std::string DllPath = GetLibraryPath(hm);
 
-		size_t dllPos = DllPath.rfind(DllName);
+		size_t dllPos = DllPath.rfind(DepDllName);
 		Assert(dllPos != std::string::npos, "Could not find dll name in string %s",
 			DllPath.c_str());
 		std::string DirectoryPath = DllPath.substr(0, dllPos);
@@ -615,8 +558,7 @@ BOOL WINAPI DllMain(
 				time.wYear,	time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond);
 			LogFilePath = DepCachePath + tmpBuffer;
 			
-			LogFileHandle = TrueCreateFileA(LogFilePath.c_str(), GENERIC_WRITE, 0,
-				nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+			LogFileHandle = fileio::CreateFileTryNew(LogFilePath.c_str(), GENERIC_WRITE);
 			if (LogFileHandle == INVALID_HANDLE_VALUE)
 			{ 
 				int iteration = 1;
@@ -628,8 +570,7 @@ BOOL WINAPI DllMain(
 						time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond,
 						iteration);
 					LogFilePath = DepCachePath + tmpBuffer;
-					LogFileHandle = TrueCreateFileA(LogFilePath.c_str(), GENERIC_WRITE, 0, nullptr,
-						CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+					LogFileHandle = fileio::CreateFileTryNew(LogFilePath.c_str(), GENERIC_WRITE);
 					++iteration;
 				}
 			}
@@ -667,28 +608,25 @@ BOOL WINAPI DllMain(
 		if (DepSuccess)
 		{
 			std::string depCachePath = DepCommandStatePath + "latest.dep";
-			HANDLE depCacheFile = TrueCreateFileA(depCachePath.c_str(), GENERIC_WRITE, 0,
-				nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-			Assert(depCacheFile != INVALID_HANDLE_VALUE, "Failed to create log file %s",
-				depCachePath.c_str());
+			HANDLE depCacheFile = fileio::CreateFileOverwrite(depCachePath.c_str(), 
+				GENERIC_WRITE);
 
-			CacheFileWriteUint(depCacheFile, DepCacheVersion);
+			cacheformat::WriteUint(depCacheFile, DepCacheVersion);
 
-			size_t fileCount = DepLibraries.size() + DepInputHashes.size() + DepOutputs.size(); 
-			CacheFileWriteUint(depCacheFile, (uint32_t)fileCount);
+			size_t fileCount = DepLibraries.size() + DepInputHashes.size() + 
+				DepOutputs.size(); 
+			cacheformat::WriteUint(depCacheFile, (uint32_t)fileCount);
+
 			for (std::string library : DepLibraries)
 			{
-				HANDLE handle = TrueCreateFileA(library.c_str(), GENERIC_READ, 0,
-					nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-				Assert(handle != INVALID_HANDLE_VALUE, "Failed to open library file %s",
-					library.c_str());
+				HANDLE handle = fileio::OpenFileAlways(library.c_str(), GENERIC_READ);
 
 				md5::Digest digest = ComputeFileHash(handle);
 				std::string hash = md5::DigestToString(&digest);
 
 				CloseHandle(handle);
 
-				CacheFileWriteFileInfo(depCacheFile, library.c_str(), digest);
+				cacheformat::WriteFileInfo(depCacheFile, library.c_str(), digest);
 
 				WriteToLog("Dep library %s, hash=%s \n", library.c_str(), hash.c_str());
 			}
@@ -699,23 +637,20 @@ BOOL WINAPI DllMain(
 				md5::Digest& digest = iter.second;
 				std::string hashString = md5::DigestToString(&digest);
 
-				CacheFileWriteFileInfo(depCacheFile, inputPath, digest);
+				cacheformat::WriteFileInfo(depCacheFile, inputPath, digest);
 
 				WriteToLog("Dep input %s hash=%s \n", inputPath, hashString.c_str());
 			}
 			for (std::string output : DepOutputs)
 			{
-				HANDLE handle = TrueCreateFileA(output.c_str(), GENERIC_READ, 0,
-					nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-				Assert(handle != INVALID_HANDLE_VALUE, "Failed to open output file %s",
-					output.c_str());
+				HANDLE handle = fileio::OpenFileAlways(output.c_str(), GENERIC_READ);
 
 				md5::Digest digest = ComputeFileHash(handle);
 				std::string hash = md5::DigestToString(&digest);
 
 				CloseHandle(handle);
 
-				CacheFileWriteFileInfo(depCacheFile, output.c_str(), digest);
+				cacheformat::WriteFileInfo(depCacheFile, output.c_str(), digest);
 
 				WriteToLog("Dep output %s, hash=%s \n", output.c_str(), hash.c_str());
 			}
@@ -727,12 +662,12 @@ BOOL WINAPI DllMain(
 			WriteToLog("Dep failed, see log above. No results cache will be written.\n");
 			if (DepVerbose)
 			{
-				printf("%s: Dep failed, see log file %s for info.\n", DllName, 
+				printf("%s: Dep failed, see log file %s for info.\n", DepDllName, 
 					LogFilePath.c_str());
 			}
 			else
 			{
-				printf("%s: Dep failed, use verbose flag (/v) for info.\n", DllName);
+				printf("%s: Dep failed, use verbose flag (/v) for info.\n", DepDllName);
 			}
 		}
 

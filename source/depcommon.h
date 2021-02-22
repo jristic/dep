@@ -3,6 +3,9 @@
 #include <stdint.h>
 #include <stdio.h>
 
+typedef unsigned long int u32;
+static_assert(sizeof(u32) == 4, "Didn't get expected size.");
+
 void SPrint(char* buf, int buf_size, const char *str, ...)
 {
 	va_list ptr;
@@ -50,3 +53,30 @@ const GUID GuidDep = {
 };
 
 const uint32_t DepCacheVersion = 1;
+
+const char* DepExeName = "dep.exe";
+#if defined(_WIN64)
+	const char* DepDllName = "dep64.dll";
+#elif defined(_WIN32)
+	const char* DepDllName = "dep32.dll";
+#else
+	#error
+#endif
+
+//
+// Target pointers for the original versions of intercepted functions (if interception is active).
+//
+static HANDLE (WINAPI * TrueCreateFileW)(LPCWSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE) = CreateFileW;
+static HANDLE (WINAPI * TrueCreateFileA)(LPCSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE) = CreateFileA;
+static BOOL (WINAPI * TrueReadFile)(HANDLE, LPVOID, DWORD, LPDWORD, LPOVERLAPPED) = ReadFile;
+static BOOL (WINAPI * TrueWriteFile)(HANDLE, LPCVOID, DWORD, LPDWORD, LPOVERLAPPED) = WriteFile;
+static HMODULE (WINAPI * TrueLoadLibraryW)(LPCWSTR) = LoadLibraryW;
+static HMODULE (WINAPI * TrueLoadLibraryA)(LPCSTR) = LoadLibraryA;
+static HMODULE (WINAPI * TrueLoadLibraryExW)(LPCWSTR,HANDLE,DWORD) = LoadLibraryExW;
+static HMODULE (WINAPI * TrueLoadLibraryExA)(LPCSTR,HANDLE,DWORD) = LoadLibraryExA;
+static BOOL (WINAPI * TrueCreateProcessA)(LPCSTR, LPSTR, LPSECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES,
+	BOOL, DWORD, LPVOID, LPCSTR, LPSTARTUPINFOA, LPPROCESS_INFORMATION) = CreateProcessA;
+static BOOL (WINAPI * TrueCreateProcessW)(LPCWSTR, LPWSTR, LPSECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES,
+	BOOL, DWORD, LPVOID, LPCWSTR, LPSTARTUPINFOW, LPPROCESS_INFORMATION) = CreateProcessW;
+
+

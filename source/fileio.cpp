@@ -1,0 +1,93 @@
+
+namespace fileio {
+
+void MakeDirectory(const char* directory)
+{
+	BOOL success = ::CreateDirectory(directory, nullptr);
+	if (!success)
+	{
+		DWORD lastError = GetLastError();
+		Assert(lastError == ERROR_ALREADY_EXISTS, 
+			"failed to create directory %s, error=%d",
+			directory, lastError);
+	}
+}
+
+HANDLE CreateFileOverwrite(const char* fileName, u32 desiredAccess)
+{
+	HANDLE handle = ::TrueCreateFileA(fileName, desiredAccess, 0, nullptr, 
+		CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+	Assert(handle != INVALID_HANDLE_VALUE, "Failed to create file %s, error=%d",
+		fileName, GetLastError());
+	return handle;
+}
+
+HANDLE CreateFileTryNew(const char* fileName, u32 desiredAccess)
+{
+	HANDLE handle = ::TrueCreateFileA(fileName, desiredAccess, 0, nullptr, 
+		CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (handle == INVALID_HANDLE_VALUE)
+	{
+		DWORD lastError = GetLastError();
+		Assert(lastError == ERROR_FILE_EXISTS,
+			"Creating new file %s failed unexpectedly, error=%d",
+			fileName, lastError);
+	}
+	return handle;
+}
+
+HANDLE OpenFileAlways(const char* fileName, u32 desiredAccess)
+{
+	HANDLE handle = ::TrueCreateFileA(fileName, desiredAccess, 0, nullptr, 
+		OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	Assert(handle != INVALID_HANDLE_VALUE, "Failed to open existing file %s, error=%d",
+		fileName, GetLastError());
+	return handle;
+}
+
+HANDLE OpenFileOptional(const char* fileName, u32 desiredAccess)
+{
+	HANDLE handle = ::TrueCreateFileA(fileName, desiredAccess, 0, nullptr, 
+		OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (handle == INVALID_HANDLE_VALUE)
+	{
+		DWORD lastError = GetLastError();
+		Assert(lastError == ERROR_FILE_NOT_FOUND,
+			"Opening file %s failed unexpectedly, error=%d",
+			fileName, lastError);
+	}
+	return handle;
+}
+
+void DeleteFile(const char* fileName)
+{
+	bool success = ::DeleteFile(fileName);
+	DWORD lastError = GetLastError();
+	Assert(success || lastError == ERROR_FILE_NOT_FOUND, 
+		"Failed to delete %s, error=%d",
+		fileName, lastError);
+}
+
+void WriteFile(HANDLE file, const void* payload, u32 payloadSize)
+{
+	DWORD bytesWritten;
+	BOOL success = ::TrueWriteFile(file, payload, payloadSize, &bytesWritten, NULL);
+	Assert(success, "Failed to write file");
+	Assert(bytesWritten == payloadSize, "Failed to write full amount");
+}
+
+void GetModuleFileName(HMODULE module, char* outFileNameBuffer, u32 bufferSize)
+{
+	DWORD copiedSize = ::GetModuleFileName(module, outFileNameBuffer, bufferSize);
+	if (copiedSize == 0)
+	{
+		Assert(false, "Error: failed to get module path. \n");
+	}
+	else if (copiedSize == bufferSize &&
+		GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+	{
+		Assert(false, "Error: buffer too short for module path. \n");
+	}
+}
+
+} // namespace fileio

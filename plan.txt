@@ -10,6 +10,7 @@
 
 TODOs:
 * Need to either handle SetCurrentDirectory properly or not support it and error out if it is called
+	-> Same with CreateDirectory 
 * add a utility or option in dep.exe to print the contents of a depcache file
 * make things like dep cache location configurable via a dep.cfg that sits in the exe/dll folder
 * Add the ability to ignore certain files or file types via dep.cfg
@@ -17,6 +18,7 @@ TODOs:
 
 
 Optimizations:
+* Set up optimized/debug configs. 
 * Need to set up measurements on how much time the overhead for dep is consuming. 
 * Currently dep.exe has to compute input hashes, then if not skipped the dll does it again. This could be collapsed into one, since the input hashes need to be computed up-front anyway. Detours CopyPayload may be a path to doing this?
 

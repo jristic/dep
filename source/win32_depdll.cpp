@@ -14,8 +14,9 @@
 #include "md5.h"
 
 // Source files
-#include "fileio.cpp"
 #include "cacheformat.cpp"
+#include "deplogic.cpp"
+#include "fileio.cpp"
 #include "md5.cpp"
 
 
@@ -72,45 +73,7 @@ std::string ConvertWideString(LPCWSTR string)
 	return str;
 }
 
-md5::Digest ComputeFileHash(HANDLE handle)
-{
-	md5::Context md5Ctx;
-	md5::Digest digest;
-	md5::Init(&md5Ctx);
 
-	uint32_t readSize = 4*1024*1024; // 4 MB
-	unsigned char* mem = (unsigned char*)malloc(readSize);
-	uint32_t bytesRead = 0;
-
-	LARGE_INTEGER large;
-	BOOL success = GetFileSizeEx(handle, &large);
-	Assert(success, "Failed to get file size, error=%d", GetLastError());
-	Assert(large.QuadPart < UINT_MAX, "File is too large, not supported");
-	uint32_t bytesToRead = large.LowPart;
-
-	while (bytesRead < bytesToRead)
-	{
-		OVERLAPPED ovr = {};
-		ovr.Offset = bytesRead;
-		DWORD bytesReadThisIteration;
-		success = TrueReadFile(handle, mem, min(bytesToRead, readSize), 
-			&bytesReadThisIteration, &ovr);
-		Assert(success, "Failed to read file, error=%d", GetLastError());
-		bytesRead += bytesReadThisIteration;
-		md5::Update(&md5Ctx, mem, bytesReadThisIteration);
-	}
-
-	md5::Final(&digest, &md5Ctx);
-
-	free(mem);
-
-	// Reset file pointer back to head since ReadFile will have advanced it.
-	DWORD result = SetFilePointer(handle, 0, NULL, FILE_BEGIN);
-	Assert(result != INVALID_SET_FILE_POINTER, "Failed to set file pointer, error=%d",
-		GetLastError());
-
-	return digest;
-}
 
 void ProcessInputFile(std::string& fileName, HANDLE handle)
 {
@@ -133,7 +96,12 @@ void ProcessInputFile(std::string& fileName, HANDLE handle)
 
 	if (checkFile)
 	{
-		md5::Digest digest = ComputeFileHash(handle);
+		md5::Digest digest = deplogic::ComputeFileHash(handle);
+		// Reset file pointer back to head since ReadFile will have advanced it.
+		//	Since this is an intercepted file create, it needs to be reset to its
+		//	initial state as if it had just been opened (since to the user it has). 
+		fileio::ResetFilePointer(handle);
+
 		std::string hash = md5::DigestToString(&digest);
 
 		WriteToLog("Input file %s, hash=%s \n", fileName.c_str(), 
@@ -621,7 +589,7 @@ BOOL WINAPI DllMain(
 			{
 				HANDLE handle = fileio::OpenFileAlways(library.c_str(), GENERIC_READ);
 
-				md5::Digest digest = ComputeFileHash(handle);
+				md5::Digest digest = deplogic::ComputeFileHash(handle);
 				std::string hash = md5::DigestToString(&digest);
 
 				CloseHandle(handle);
@@ -645,7 +613,7 @@ BOOL WINAPI DllMain(
 			{
 				HANDLE handle = fileio::OpenFileAlways(output.c_str(), GENERIC_READ);
 
-				md5::Digest digest = ComputeFileHash(handle);
+				md5::Digest digest = deplogic::ComputeFileHash(handle);
 				std::string hash = md5::DigestToString(&digest);
 
 				CloseHandle(handle);

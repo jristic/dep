@@ -10,8 +10,9 @@
 #include "md5.h"
 
 // Source files
-#include "fileio.cpp"
 #include "cacheformat.cpp"
+#include "deplogic.cpp"
+#include "fileio.cpp"
 #include "md5.cpp"
 
 //////////////////////////////////////////////////////////////////////////////
@@ -24,41 +25,6 @@ void PrintUsage(void)
 		   "	/f		: Force, perform the command even if up to date.\n"
 		   "	/v		: Verbose, print info to console and log file.\n"
 		   "	/?		: This help screen.\n");
-}
-
-md5::Digest ComputeFileHash(HANDLE handle)
-{
-	uint32_t readSize = 4*1024*1024; // 4 MB
-	unsigned char* readBuffer = (unsigned char*)malloc(readSize);
-	uint32_t bytesRead = 0;
-
-	LARGE_INTEGER large;
-	BOOL success = GetFileSizeEx(handle, &large);
-	Assert(success, "Failed to get file size, error=%d", GetLastError());
-	Assert(large.QuadPart < UINT_MAX, "File is too large, not supported");
-	uint32_t bytesToRead = large.LowPart;
-
-	md5::Context md5Ctx;
-	md5::Digest digest;
-	md5::Init(&md5Ctx);
-
-	while (bytesRead < bytesToRead)
-	{
-		OVERLAPPED ovr = {};
-		ovr.Offset = bytesRead;
-		DWORD bytesReadThisIteration;
-		success = TrueReadFile(handle, readBuffer, min(bytesToRead, readSize), 
-			&bytesReadThisIteration, &ovr);
-		Assert(success, "Failed to read file, error=%d", GetLastError());
-		bytesRead += bytesReadThisIteration;
-		md5::Update(&md5Ctx, readBuffer, bytesReadThisIteration);
-	}
-
-	md5::Final(&digest, &md5Ctx);
-
-	free(readBuffer);
-
-	return digest;
 }
 
 #define VerbosePrint(format, ...) if (Verbose) { printf(format, __VA_ARGS__); } else {}
@@ -167,7 +133,6 @@ int CDECL main(int argc, char **argv)
 	// Hash the full path to the exe/bat being used, the contents of the exe, 
 	//	the command line, and the current working directory.
 	md5::Context md5Ctx;
-	md5::Digest digest;
 	md5::Init(&md5Ctx);
 	md5::Update(&md5Ctx, (unsigned char*)szFullExe, strlen(szFullExe));
 	md5::Update(&md5Ctx, (unsigned char*)szCommand, strlen(szCommand));
@@ -175,40 +140,16 @@ int CDECL main(int argc, char **argv)
 	{
 		HANDLE handle = fileio::OpenFileAlways(szFullExe, GENERIC_READ);
 
-		uint32_t readSize = 4*1024*1024; // 4 MB
-		unsigned char* readBuffer = (unsigned char*)malloc(readSize);
-		uint32_t bytesRead = 0;
-
-		LARGE_INTEGER large;
-		BOOL success = GetFileSizeEx(handle, &large);
-		Assert(success, "Failed to get file size, error=%d", GetLastError());
-		Assert(large.QuadPart < UINT_MAX, "File is too large, not supported");
-		uint32_t bytesToRead = large.LowPart;
-
-		while (bytesRead < bytesToRead)
-		{
-			OVERLAPPED ovr = {};
-			ovr.Offset = bytesRead;
-			DWORD bytesReadThisIteration;
-			success = TrueReadFile(handle, readBuffer, min(bytesToRead, readSize), 
-				&bytesReadThisIteration, &ovr);
-			Assert(success, "Failed to read file, error=%d", GetLastError());
-			bytesRead += bytesReadThisIteration;
-			md5::Update(&md5Ctx, readBuffer, bytesReadThisIteration);
-		}
-
-		free(readBuffer);
+		deplogic::ComputeFileHash(handle, &md5Ctx);
 
 		CloseHandle(handle);
 	}
 	// The current working directory
 	{
-		DWORD copiedBytes = GetCurrentDirectory(sizeof(szCurrentDirectory), szCurrentDirectory);
-		Assert(copiedBytes > 0, "Failed to get current directory, error=%d", GetLastError());
-		Assert(copiedBytes <= sizeof(szCurrentDirectory), "Current directory path too long, %d", 
-			copiedBytes);
+		fileio::GetCurrentDirectory(szCurrentDirectory, sizeof(szCurrentDirectory));
 		md5::Update(&md5Ctx, (unsigned char*)szCurrentDirectory, strlen(szCurrentDirectory));
 	}
+	md5::Digest digest;
 	md5::Final(&digest, &md5Ctx);
 
 	// Make a subfolder for this command state
@@ -228,21 +169,11 @@ int CDECL main(int argc, char **argv)
 		HANDLE depCacheFile = fileio::OpenFileOptional(depCacheFilePath.c_str(), GENERIC_READ);
 		if (depCacheFile != INVALID_HANDLE_VALUE)
 		{
-			LARGE_INTEGER large;
-			BOOL success = GetFileSizeEx(depCacheFile, &large);
-			Assert(success, "Failed to get file size, error=%d", GetLastError());
-			Assert(large.QuadPart < UINT_MAX, "File is too large, not supported");
-
-			uint32_t fileSize = large.LowPart;
+			uint32_t fileSize = fileio::GetFileSize(depCacheFile);
 
 			unsigned char* depCacheContents = (unsigned char*)malloc(fileSize);
 
-			DWORD bytesRead;
-			success = TrueReadFile(depCacheFile, depCacheContents, fileSize, &bytesRead,
-				nullptr);
-			Assert(success, "Failed to read file, error=%d", GetLastError());
-			Assert(bytesRead == fileSize, "Didn't read full file, error=%d ",
-				GetLastError());
+			fileio::ReadFile(depCacheFile, depCacheContents, fileSize);
 
 			CloseHandle(depCacheFile);
 
@@ -260,7 +191,7 @@ int CDECL main(int argc, char **argv)
 					HANDLE fileHandle = fileio::OpenFileOptional(filePath.c_str(), GENERIC_READ);
 					if (fileHandle != INVALID_HANDLE_VALUE)
 					{
-						md5::Digest currHash = ComputeFileHash(fileHandle);
+						md5::Digest currHash = deplogic::ComputeFileHash(fileHandle);
 						CloseHandle(fileHandle);
 						if (memcmp(currHash.bytes, prevHash.bytes, sizeof(currHash.bytes)) != 0)
 						{

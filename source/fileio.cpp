@@ -68,12 +68,56 @@ void DeleteFile(const char* fileName)
 		fileName, lastError);
 }
 
+u32 GetFileSize(HANDLE file)
+{
+	LARGE_INTEGER large;
+	BOOL success = ::GetFileSizeEx(file, &large);
+	Assert(success, "Failed to get file size, error=%d", GetLastError());
+	Assert(large.QuadPart < UINT_MAX, "File is too large, not supported");
+	return large.LowPart;
+}
+
 void WriteFile(HANDLE file, const void* payload, u32 payloadSize)
 {
 	DWORD bytesWritten;
 	BOOL success = ::TrueWriteFile(file, payload, payloadSize, &bytesWritten, NULL);
 	Assert(success, "Failed to write file");
 	Assert(bytesWritten == payloadSize, "Failed to write full amount");
+}
+
+void ReadFile(HANDLE file, void* readBuffer, u32 bytesToRead)
+{
+	DWORD bytesRead;
+	BOOL success = ::TrueReadFile(file, readBuffer, bytesToRead, &bytesRead,
+		nullptr);
+	Assert(success, "Failed to read file, error=%d", GetLastError());
+	Assert(bytesRead == bytesToRead, "Didn't read full file, error=%d",
+		GetLastError());
+}
+
+void ReadFileAtOffset(HANDLE file, void* readBuffer, u32 readOffset, u32 bytesToRead)
+{
+	OVERLAPPED ovr = {};
+	ovr.Offset = readOffset;
+	DWORD bytesRead;
+	BOOL success = ::TrueReadFile(file, readBuffer, bytesToRead, &bytesRead, &ovr);
+	Assert(success, "Failed to read file, error=%d", GetLastError());
+	Assert(bytesRead == bytesToRead, "Didn't read full file, error=%d",
+		GetLastError());
+}
+
+void ResetFilePointer(HANDLE file)
+{
+	DWORD result = ::SetFilePointer(file, 0, NULL, FILE_BEGIN);
+	Assert(result != INVALID_SET_FILE_POINTER, "Failed to set file pointer, error=%d",
+		GetLastError());
+}
+
+void GetCurrentDirectory(char* outDirectoryBuffer, u32 bufferSize)
+{
+	DWORD copiedBytes = ::GetCurrentDirectory(bufferSize, outDirectoryBuffer);
+	Assert(copiedBytes > 0, "Failed to get current directory, error=%d", GetLastError());
+	Assert(copiedBytes <= bufferSize, "Current directory path too long, %d", copiedBytes);
 }
 
 void GetModuleFileName(HMODULE module, char* outFileNameBuffer, u32 bufferSize)

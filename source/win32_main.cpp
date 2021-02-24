@@ -130,27 +130,11 @@ int CDECL main(int argc, char **argv)
 		Assert(copiedBytes <= sizeof(szFullExe), "Exe path too long, %d", copiedBytes);
 	}
 
-	// Hash the full path to the exe/bat being used, the contents of the exe, 
-	//	the command line, and the current working directory.
-	md5::Context md5Ctx;
-	md5::Init(&md5Ctx);
-	md5::Update(&md5Ctx, (unsigned char*)szFullExe, strlen(szFullExe));
-	md5::Update(&md5Ctx, (unsigned char*)szCommand, strlen(szCommand));
-	// The exe file contents
-	{
-		HANDLE handle = fileio::OpenFileAlways(szFullExe, GENERIC_READ);
+	// Retrieve the current directory.
+	fileio::GetCurrentDirectory(szCurrentDirectory, sizeof(szCurrentDirectory));
 
-		deplogic::ComputeFileHash(handle, &md5Ctx);
-
-		CloseHandle(handle);
-	}
-	// The current working directory
-	{
-		fileio::GetCurrentDirectory(szCurrentDirectory, sizeof(szCurrentDirectory));
-		md5::Update(&md5Ctx, (unsigned char*)szCurrentDirectory, strlen(szCurrentDirectory));
-	}
-	md5::Digest digest;
-	md5::Final(&digest, &md5Ctx);
+	md5::Digest digest = deplogic::ComputeCommandStateHash(szFullExe, szCommand, 
+		szCurrentDirectory);
 
 	// Make a subfolder for this command state
 	std::string subFolder = md5::DigestToString(&digest);
@@ -163,67 +147,13 @@ int CDECL main(int argc, char **argv)
 
 	if (!Force)
 	{
-		// Read the cache file containing the file info for the most recent invocation,
-		//	and if the current state of any file is different from that then we need to
-		//	rebuild. 
-		HANDLE depCacheFile = fileio::OpenFileOptional(depCacheFilePath.c_str(), GENERIC_READ);
-		if (depCacheFile != INVALID_HANDLE_VALUE)
+		std::string reason;
+		bool checkPassed = deplogic::CheckCacheState(depCacheFilePath.c_str(),
+			reason);
+		ExecuteProcess = !checkPassed;
+		if (!checkPassed)
 		{
-			uint32_t fileSize = fileio::GetFileSize(depCacheFile);
-
-			unsigned char* depCacheContents = (unsigned char*)malloc(fileSize);
-
-			fileio::ReadFile(depCacheFile, depCacheContents, fileSize);
-
-			CloseHandle(depCacheFile);
-
-			unsigned char* fileReadPtr = depCacheContents;
-
-			uint32_t version = cacheformat::ReadUint(fileReadPtr);
-
-			if (version == DepCacheVersion)
-			{
-				uint32_t fileCount = cacheformat::ReadUint(fileReadPtr);
-				for (uint32_t i = 0 ; i < fileCount ; ++i)
-				{
-					std::string filePath;
-					md5::Digest prevHash = cacheformat::ReadFileInfo(fileReadPtr, filePath);
-					HANDLE fileHandle = fileio::OpenFileOptional(filePath.c_str(), GENERIC_READ);
-					if (fileHandle != INVALID_HANDLE_VALUE)
-					{
-						md5::Digest currHash = deplogic::ComputeFileHash(fileHandle);
-						CloseHandle(fileHandle);
-						if (memcmp(currHash.bytes, prevHash.bytes, sizeof(currHash.bytes)) != 0)
-						{
-							ExecuteProcess = true;
-							VerbosePrint("dep.exe: %s didn't match previous state, rebuild required.\n",
-								filePath.c_str());
-							break;
-						}
-					}
-					else
-					{
-						ExecuteProcess = true;
-						VerbosePrint("dep.exe: Couldn't find dependency %s, rebuild required.\n",
-							filePath.c_str());
-						break;
-					}
-				}
-			}
-			else
-			{
-				ExecuteProcess = true;
-				VerbosePrint("dep.exe: Dep cache file version out of date, rebuild required.\n");
-			}
-
-			free(depCacheContents);
-		}
-		else
-		{
-			// No cache file exists, either this command state hasn't been run before
-			//	or it returned an error on the last invocation. 
-			VerbosePrint("dep.exe: No cached state for current command state, rebuild required.\n");
-			ExecuteProcess = true;
+			VerbosePrint("dep.exe: %s\n", reason.c_str());
 		}
 	}
 
@@ -237,26 +167,18 @@ int CDECL main(int argc, char **argv)
 
 		SetLastError(0);
 		if (!DetourCreateProcessWithDllEx(szFullExe[0] ? szFullExe : NULL, szCommand,
-			NULL, NULL, TRUE, dwFlags, NULL, NULL, &si, &pi, DllPath.c_str(), TrueCreateProcessA))
+			NULL, NULL, TRUE, dwFlags, NULL, NULL, &si, &pi, DllPath.c_str(), 
+			TrueCreateProcessA))
 		{
 			DWORD dwError = GetLastError();
 			printf("dep.exe: DetourCreateProcessWithDllEx failed: %d\n", dwError);
 			if (dwError == ERROR_INVALID_HANDLE)
-				printf("dep.exe: Mismatched 32/64 bitness between parent and created process.\n");
+				printf("dep.exe: Mismatched 32/64-bitness between dll and process.\n");
 			ExitProcess(9009);
 		}
 
 		// Copy payload to DLL
-		{
-			uint32_t flags = Verbose << 0 | Force << 1;
-			DWORD payloadSize = sizeof(flags) + 32;
-			unsigned char* payload = (unsigned char*)malloc(payloadSize);
-			*((uint32_t*)payload) = flags;
-			memcpy(payload + sizeof(flags), subFolder.c_str(), 32);
-			BOOL success = DetourCopyPayloadToProcess(pi.hProcess, GuidDep, payload, payloadSize);
-			Assert(success, "Failed to copy payload, error=%d", GetLastError());
-			free(payload);
-		}
+		deplogic::WriteDllPayload(pi.hProcess, subFolder.c_str(), Verbose, Force);
 
 		ResumeThread(pi.hThread);
 

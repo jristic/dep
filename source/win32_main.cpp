@@ -166,9 +166,8 @@ int CDECL main(int argc, char **argv)
 		DWORD dwFlags = CREATE_DEFAULT_ERROR_MODE | CREATE_SUSPENDED;
 
 		SetLastError(0);
-		if (!DetourCreateProcessWithDllEx(szFullExe[0] ? szFullExe : NULL, szCommand,
-			NULL, NULL, TRUE, dwFlags, NULL, NULL, &si, &pi, DllPath.c_str(), 
-			TrueCreateProcessA))
+		if (!DetourCreateProcessWithDllEx(szFullExe, szCommand,	NULL, NULL, FALSE, 
+			dwFlags, NULL, NULL, &si, &pi, DllPath.c_str(), TrueCreateProcessA))
 		{
 			DWORD dwError = GetLastError();
 			printf("dep.exe: DetourCreateProcessWithDllEx failed: %d\n", dwError);

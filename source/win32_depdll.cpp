@@ -34,6 +34,7 @@ u32 InterceptedExitCode;
 
 std::string DepExePath;
 std::string DepDllPath;
+std::string DepDirectoryPath;
 std::string DepCachePath;
 std::string DepCommandStatePath;
 std::string WindowsSystemPath;
@@ -47,6 +48,15 @@ std::set<std::string> DepLibraries;
 std::mutex DepOutputLock;
 std::set<std::string> DepOutputs;
 
+#define VerbosePrint(format, ...) if (DepVerbose) { printf(format, __VA_ARGS__); } else {}
+
+thread_local bool Reentrant = false;
+class ScopedReentrantSet
+{
+public:
+	ScopedReentrantSet() { Reentrant = true; }
+	~ScopedReentrantSet() { Reentrant = false; }
+};
 
 
 void WriteToLog(const char *format, ...)
@@ -67,7 +77,7 @@ void WriteToLog(const char *format, ...)
 	}
 }
 
-std::string ConvertWideString(LPCWSTR string)
+void ConvertWideString(LPCWSTR string, std::string& out)
 {
 	size_t mblen = (wcslen(string)+1)*2;
 	char* mbstr = (char*)malloc(mblen);
@@ -75,11 +85,21 @@ std::string ConvertWideString(LPCWSTR string)
 	int result = wcstombs_s(&convertedSize, mbstr, mblen, string, mblen);
 	Assert(result == 0, "Failed to convert string %ls, wcstombs_s errno=%d", 
 		string, result);
-	std::string str(mbstr);
+	out = mbstr;
 	free(mbstr);
-	return str;
 }
 
+void ConvertToWideString(std::string& in, std::wstring& out)
+{
+	size_t wlen = (in.length()+1)*2;
+	wchar_t* wstr = (wchar_t*)malloc(wlen*sizeof(wchar_t));
+	size_t convertedSize = 0;
+	int result = mbstowcs_s(&convertedSize, wstr, wlen, in.c_str(), wlen);
+	Assert(result == 0, "Failed to convert string %s, wcstombs_s errno=%d", 
+		in.c_str(), result);
+	out = wstr;
+	free(wstr);
+}
 
 
 void ProcessInputFile(std::string& fileName, HANDLE handle)
@@ -130,6 +150,14 @@ HANDLE WINAPI InterceptCreateFileW(
 	DWORD                 dwFlagsAndAttributes,
 	HANDLE                hTemplateFile)
 {
+	if (Reentrant)
+	{
+		return TrueCreateFileW(lpFileName, dwDesiredAccess, dwShareMode,
+			lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, 
+			hTemplateFile);
+	}
+	ScopedReentrantSet srs;
+
 	WriteToLog("Intercepting CreateFileW %ls \n", lpFileName);
 	HANDLE handle = TrueCreateFileW(lpFileName, dwDesiredAccess, dwShareMode,
 		lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
@@ -155,7 +183,8 @@ HANDLE WINAPI InterceptCreateFileW(
 
 	// TODO: check that this file wasn't previously opened with a different dwDesiredAccess
 
-	std::string fileName = ConvertWideString(lpFileName);
+	std::string fileName;
+	ConvertWideString(lpFileName, fileName);
 
 	if ((dwDesiredAccess & GENERIC_READ) != 0)
 	{
@@ -181,6 +210,14 @@ HANDLE WINAPI InterceptCreateFileA(
 	DWORD                 dwFlagsAndAttributes,
 	HANDLE                hTemplateFile)
 {
+	if (Reentrant)
+	{
+		return TrueCreateFileA(lpFileName, dwDesiredAccess, dwShareMode, 
+			lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, 
+			hTemplateFile);
+	}
+	ScopedReentrantSet srs;
+
 	WriteToLog("Intercepting CreateFileA %s \n", lpFileName);
 	HANDLE handle = TrueCreateFileA(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes,
 		dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
@@ -282,6 +319,12 @@ void ProcessLibrary(HMODULE module)
 
 HMODULE WINAPI InterceptLoadLibraryW(LPCWSTR lpLibFileName)
 {
+	if (Reentrant)
+	{
+		return TrueLoadLibraryW(lpLibFileName);
+	}
+	ScopedReentrantSet srs;
+
 	WriteToLog("Intercepting LoadLibraryW %ls \n", lpLibFileName);
 
 	HMODULE module = TrueLoadLibraryW(lpLibFileName);
@@ -303,6 +346,12 @@ HMODULE WINAPI InterceptLoadLibraryW(LPCWSTR lpLibFileName)
 
 HMODULE WINAPI InterceptLoadLibraryA(LPCSTR lpLibFileName)
 {
+	if (Reentrant)
+	{
+		return TrueLoadLibraryA(lpLibFileName);
+	}
+	ScopedReentrantSet srs;
+
 	WriteToLog("Intercepting LoadLibraryA %s \n", lpLibFileName);
 
 	HMODULE module = TrueLoadLibraryA(lpLibFileName);
@@ -324,6 +373,12 @@ HMODULE WINAPI InterceptLoadLibraryA(LPCSTR lpLibFileName)
 
 HMODULE WINAPI InterceptLoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, DWORD dwFlags)
 {
+	if (Reentrant)
+	{
+		return TrueLoadLibraryExW(lpLibFileName, hFile, dwFlags);
+	}
+	ScopedReentrantSet srs;
+
 	WriteToLog("Intercepting LoadLibraryExW %ls \n", lpLibFileName);
 
 	HMODULE module = TrueLoadLibraryExW(lpLibFileName, hFile, dwFlags);
@@ -354,6 +409,12 @@ HMODULE WINAPI InterceptLoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, DWOR
 
 HMODULE WINAPI InterceptLoadLibraryExA(LPCSTR lpLibFileName, HANDLE hFile, DWORD dwFlags)
 {
+	if (Reentrant)
+	{
+		return TrueLoadLibraryExA(lpLibFileName, hFile, dwFlags);
+	}
+	ScopedReentrantSet srs;
+
 	WriteToLog("Intercepting LoadLibraryExA %s \n", lpLibFileName);
 
 	HMODULE module = TrueLoadLibraryExA(lpLibFileName, hFile, dwFlags);
@@ -394,9 +455,19 @@ BOOL WINAPI InterceptCreateProcessA(
 	LPSTARTUPINFOA        lpStartupInfo,
 	LPPROCESS_INFORMATION lpProcessInformation)
 {
+	if (Reentrant)
+	{
+		return TrueCreateProcessA(lpApplicationName, lpCommandLine, 
+			lpProcessAttributes, lpThreadAttributes, bInheritHandles, 
+			dwCreationFlags, lpEnvironment, lpCurrentDirectory, lpStartupInfo, 
+			lpProcessInformation);
+	}
+	ScopedReentrantSet srs;
+
 	WriteToLog("Intercepting CreateProcessA %s %s \n", lpApplicationName, lpCommandLine);
 
-	// TODO: get the EXE for the process we're creating
+	bool tryIntercept = true;
+
 	std::string exe;
 	if (lpApplicationName)
 	{
@@ -404,25 +475,141 @@ BOOL WINAPI InterceptCreateProcessA(
 	}
 	else
 	{
-
+		const char* firstSpace = strchr(lpCommandLine, ' ');
+		if (firstSpace)
+			exe = std::string(lpCommandLine, firstSpace - lpCommandLine);
+		else
+			exe = lpCommandLine;
 	}
 
-	// TODO: if that EXE is dep, then remove it and use the first arg on the command line as the exe
+	// TODO: if the EXE is dep, then remove it and use the first arg on the command 
+	//	line as the exe
+	// if (StrStrIA(exe.c_str(), DepExeName) != nullptr ||
+	// 	StrStrIA(exe.c_str(), DepExePath.c_str()) != nullptr)
+	// {
+	// 	if (lpApplicationName)
+	// }
 
+	// Find the full path of the exe being invoked. 
+	std::string fullExePath;
+	{
+		u32 bufferSize = 1024;
+		char* buffer = (char*)malloc(bufferSize);
+		char* pszFileExe = nullptr;
+		DWORD copiedBytes = SearchPathA(NULL, exe.c_str(), ".exe", bufferSize,
+			buffer, &pszFileExe);
+		if (copiedBytes == 0)
+		{
+			tryIntercept = false;
+			WriteToLog("Dep failure: Failed to find exe %s, error=%d \n", 
+				exe.c_str(), GetLastError());
+		}
+		Assert(copiedBytes <= bufferSize, "Exe path too long, %d", copiedBytes);
+		fullExePath = buffer;
+		free(buffer);
+	}
 
-	BOOL success = TrueCreateProcessA(
-		lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes,
-		bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, 
-		lpStartupInfo, lpProcessInformation);
-	DWORD errorToPreserve = GetLastError();
+	// TODO: handle environment
+	if (lpEnvironment)
+	{
+		tryIntercept = false;
+		WriteToLog("Dep failure: CreateProcess with lpEnvironment not supported\n");
+	}
 
-	SetLastError(errorToPreserve);
-	return success;
+	if (!tryIntercept)
+	{
+		DepSuccess = false;
+		return TrueCreateProcessA(
+			lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes,
+			bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, 
+			lpStartupInfo, lpProcessInformation);
+	}
+
+	std::string currentDirectory;
+	// Retrieve the current directory.
+	if (lpCurrentDirectory)
+	{
+		currentDirectory = lpCurrentDirectory;
+	}
+	else
+	{
+		u32 bufferSize = 1024;
+		char* currentDirectoryBuffer = (char*)malloc(bufferSize);
+		fileio::GetCurrentDirectory(currentDirectoryBuffer, bufferSize);
+		currentDirectory = currentDirectoryBuffer;
+		free(currentDirectoryBuffer);
+	}
+
+	md5::Digest digest = deplogic::ComputeCommandStateHash(fullExePath.c_str(), 
+		lpCommandLine, currentDirectory.c_str());
+
+	// Make a subfolder for this command state
+	std::string subFolder = md5::DigestToString(&digest);
+	std::string subCommandStatePath = DepCachePath + subFolder + "\\";
+	fileio::MakeDirectory(subCommandStatePath.c_str());
+
+	std::string depCacheFilePath = subCommandStatePath + "latest.dep";
+
+	bool ExecuteProcess = false;
+
+	if (!DepForce)
+	{
+		std::string reason;
+		bool checkPassed = deplogic::CheckCacheState(depCacheFilePath.c_str(),
+			reason);
+		ExecuteProcess = !checkPassed;
+		if (!checkPassed)
+		{
+			VerbosePrint("%s: %s\n", DepDllName, reason.c_str());
+		}
+	}
+
+	// Execute the command, if necessary. 
+	if (ExecuteProcess || DepForce)
+	{
+		VerbosePrint("%s: Starting: '%s', md5=%s\n", DepDllName, lpCommandLine, 
+			subFolder.c_str());
+		fflush(stdout);
+
+		bool suspended = (dwCreationFlags & CREATE_SUSPENDED) != 0;
+
+		DWORD dwFlags = dwCreationFlags | CREATE_DEFAULT_ERROR_MODE | CREATE_SUSPENDED;
+
+		SetLastError(0);
+		if (!DetourCreateProcessWithDllEx(fullExePath.c_str(), lpCommandLine,
+			lpProcessAttributes, lpThreadAttributes, bInheritHandles, dwFlags, 
+			lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInformation, 
+			DepDllPath.c_str(), TrueCreateProcessA))
+		{
+			DWORD dwError = GetLastError();
+			WriteToLog("DetourCreateProcessWithDllEx failed: %d\n", dwError);
+			if (dwError == ERROR_INVALID_HANDLE)
+				WriteToLog("Mismatched 32/64-bitness between dll and process.\n");
+			SetLastError(dwError);
+			return false;
+		}
+
+		// Copy payload to DLL
+		deplogic::WriteDllPayload(lpProcessInformation->hProcess, subFolder.c_str(), 
+			DepVerbose, DepForce);
+
+		if (!suspended)
+			ResumeThread(lpProcessInformation->hThread);
+
+		return true;
+	}
+
+	// The process is up-to-date, just launch a dummy process which does nothing but
+	//	return the success exit code (0). 
+	return TrueCreateProcessA( 
+		(DepDirectoryPath + "depskip.exe").c_str(), lpCommandLine,
+		lpProcessAttributes, lpThreadAttributes, bInheritHandles, dwCreationFlags, 
+		lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInformation );
 }
 
 BOOL WINAPI InterceptCreateProcessW(
 	LPCWSTR               lpApplicationName,
-	LPWSTR                 lpCommandLine,
+	LPWSTR                lpCommandLine,
 	LPSECURITY_ATTRIBUTES lpProcessAttributes,
 	LPSECURITY_ATTRIBUTES lpThreadAttributes,
 	BOOL                  bInheritHandles,
@@ -432,16 +619,165 @@ BOOL WINAPI InterceptCreateProcessW(
 	LPSTARTUPINFOW        lpStartupInfo,
 	LPPROCESS_INFORMATION lpProcessInformation)
 {
+	if (Reentrant)
+	{
+		return TrueCreateProcessW(
+			lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes,
+			bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, 
+			lpStartupInfo, lpProcessInformation);
+	}
+	ScopedReentrantSet srs;
+
 	WriteToLog("Intercepting CreateProcessW %ls %ls \n", lpApplicationName, lpCommandLine);
 
-	// TODO: implement
-	DepSuccess = false;
-	WriteToLog("Dep failure, createprocess not implemented \n");
+	bool tryIntercept = true;
 
-	return TrueCreateProcessW(
-		lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes,
+	std::wstring exe;
+	if (lpApplicationName)
+	{
+		exe = lpApplicationName;
+	}
+	else
+	{
+		const wchar_t* firstSpace = wcschr(lpCommandLine, ' ');
+		if (firstSpace)
+			exe = std::wstring(lpCommandLine, firstSpace - lpCommandLine);
+		else
+			exe = lpCommandLine;
+	}
+
+	// TODO: if the EXE is dep, then remove it and use the first arg on the command 
+	//	line as the exe
+	// if (StrStrIA(exe.c_str(), DepExeName) != nullptr ||
+	// 	StrStrIA(exe.c_str(), DepExePath.c_str()) != nullptr)
+	// {
+	// 	if (lpApplicationName)
+	// }
+
+	// Find the full path of the exe being invoked. 
+	std::wstring fullExePath;
+	{
+		u32 bufferSize = 1024;
+		wchar_t* buffer = (wchar_t*)malloc(bufferSize*sizeof(wchar_t));
+		wchar_t* pszFileExe = nullptr;
+		DWORD copiedBytes = SearchPathW(NULL, exe.c_str(), L".exe", bufferSize,
+			buffer, &pszFileExe);
+		if (copiedBytes == 0)
+		{
+			tryIntercept = false;
+			WriteToLog("Dep failure: Failed to find exe %s, error=%d \n", 
+				exe.c_str(), GetLastError());
+		}
+		Assert(copiedBytes <= bufferSize, "Exe path too long, %d", copiedBytes);
+		fullExePath = buffer;
+		free(buffer);
+	}
+
+	// TODO: handle environment
+	if (lpEnvironment)
+	{
+		tryIntercept = false;
+		WriteToLog("Dep failure: CreateProcess with lpEnvironment not supported\n");
+	}
+
+	if (!tryIntercept)
+	{
+		DepSuccess = false;
+		return TrueCreateProcessW(
+			lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes,
+			bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, 
+			lpStartupInfo, lpProcessInformation);
+	}
+
+	std::wstring currentDirectory;
+	// Retrieve the current directory.
+	if (lpCurrentDirectory)
+	{
+		currentDirectory = lpCurrentDirectory;
+	}
+	else
+	{
+		u32 bufferSize = 1024;
+		wchar_t* currentDirectoryBuffer = (wchar_t*)malloc(bufferSize*sizeof(wchar_t));
+		DWORD copiedBytes = GetCurrentDirectoryW(bufferSize, currentDirectoryBuffer);
+		Assert(copiedBytes > 0, "Failed to get current directory, error=%d", GetLastError());
+		Assert(copiedBytes <= bufferSize, "Current directory path too long, %d", copiedBytes);
+		currentDirectory = currentDirectoryBuffer;
+		free(currentDirectoryBuffer);
+	}
+
+	std::string convFullExe, convCommand, convDir;
+	ConvertWideString(fullExePath.c_str(), convFullExe);
+	ConvertWideString(lpCommandLine, convCommand);
+	ConvertWideString(currentDirectory.c_str(), convDir);
+	md5::Digest digest = deplogic::ComputeCommandStateHash(convFullExe.c_str(), 
+		convCommand.c_str(), convDir.c_str());
+
+	// Make a subfolder for this command state
+	std::string subFolder = md5::DigestToString(&digest);
+	std::string subCommandStatePath = DepCachePath + subFolder + "\\";
+	fileio::MakeDirectory(subCommandStatePath.c_str());
+
+	std::string depCacheFilePath = subCommandStatePath + "latest.dep";
+
+	bool ExecuteProcess = false;
+
+	if (!DepForce)
+	{
+		std::string reason;
+		bool checkPassed = deplogic::CheckCacheState(depCacheFilePath.c_str(),
+			reason);
+		ExecuteProcess = !checkPassed;
+		if (!checkPassed)
+		{
+			VerbosePrint("%s: %s\n", DepDllName, reason.c_str());
+		}
+	}
+
+	// Execute the command, if necessary. 
+	if (ExecuteProcess || DepForce)
+	{
+		VerbosePrint("%s: Starting: '%ls', md5=%s\n", DepDllName, lpCommandLine, 
+			subFolder.c_str());
+		fflush(stdout);
+
+		bool suspended = (dwCreationFlags & CREATE_SUSPENDED) != 0;
+
+		DWORD dwFlags = dwCreationFlags | CREATE_DEFAULT_ERROR_MODE | CREATE_SUSPENDED;
+
+		SetLastError(0);
+		if (!DetourCreateProcessWithDllExW(fullExePath.c_str(), lpCommandLine,
+			lpProcessAttributes, lpThreadAttributes, bInheritHandles, dwFlags, 
+			lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInformation, 
+			DepDllPath.c_str(), TrueCreateProcessW))
+		{
+			DWORD dwError = GetLastError();
+			WriteToLog("DetourCreateProcessWithDllEx failed: %d\n", dwError);
+			if (dwError == ERROR_INVALID_HANDLE)
+				WriteToLog("Mismatched 32/64-bitness between dll and process.\n");
+			SetLastError(dwError);
+			return false;
+		}
+
+		// Copy payload to DLL
+		deplogic::WriteDllPayload(lpProcessInformation->hProcess, subFolder.c_str(), 
+			DepVerbose, DepForce);
+
+		if (!suspended)
+			ResumeThread(lpProcessInformation->hThread);
+
+		return true;
+	}
+
+	// The process is up-to-date, just launch a dummy process which does nothing but
+	//	return the success exit code (0). 
+	std::string depSkipPath = DepDirectoryPath + "depskip.exe";
+	std::wstring convPath;
+	ConvertToWideString(depSkipPath, convPath);
+	return TrueCreateProcessW( 
+		convPath.c_str(), lpCommandLine, lpProcessAttributes, lpThreadAttributes, 
 		bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, 
-		lpStartupInfo, lpProcessInformation);
+		lpStartupInfo, lpProcessInformation );
 }
 
 void WINAPI InterceptExitProcess(UINT exitCode)
@@ -522,11 +858,11 @@ BOOL WINAPI DllMain(
 		size_t dllPos = DepDllPath.rfind(DepDllName);
 		Assert(dllPos != std::string::npos, "Could not find dll name in string %s",
 			DepDllPath.c_str());
-		std::string DirectoryPath = DepDllPath.substr(0, dllPos);
+		DepDirectoryPath = DepDllPath.substr(0, dllPos);
 
-		DepExePath = DirectoryPath + DepExeName;
+		DepExePath = DepDirectoryPath + DepExeName;
 
-		DepCachePath = DirectoryPath + "depcache\\";
+		DepCachePath = DepDirectoryPath + "depcache\\";
 
 		// Extract payload data from the detours section.
 		char commandStateHash[32+1];

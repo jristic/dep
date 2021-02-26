@@ -64,7 +64,7 @@ int main(int argc, char* argv[])
 
 		DWORD dwResult = 0;
 		if (!GetExitCodeProcess(pi.hProcess, &dwResult)) {
-			printf("dep.exe: GetExitCodeProcess failed: %d\n", GetLastError());
+			printf("GetExitCodeProcess failed: %d\n", GetLastError());
 			exit(5);
 		}
 
@@ -85,15 +85,15 @@ int main(int argc, char* argv[])
 		) 
 		{
 			printf( "CreateProcess failed (%d).\n", GetLastError() );
-			exit(4);
+			exit(6);
 		}
 
 		WaitForSingleObject(pi.hProcess, INFINITE);
 
 		DWORD dwResult = 0;
 		if (!GetExitCodeProcess(pi.hProcess, &dwResult)) {
-			printf("dep.exe: GetExitCodeProcess failed: %d\n", GetLastError());
-			exit(5);
+			printf("GetExitCodeProcess failed: %d\n", GetLastError());
+			exit(7);
 		}
 
 		if (dwResult != 0)

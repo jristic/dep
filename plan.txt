@@ -1,8 +1,4 @@
 * Handle subprocess creation
-	-> basically what we do in the dep exe needs to happen from within the dll as well, recursively setting up itself within the next child
-	-> if up to date, instead launch a depskip.exe process which will just return 0 to maintain opaque operation to the intercepted process
-	-> May need to hook WaitForSingleObject or GetExitCodeProcess to do post-completion work for the sub-process
-		-> need to do the similar part from the Exe where if the returned exit code is non-zero, delete the cache file
 	-> Check if subprocess creation is trying to launch via dep as well. If so, do not attempt to intercept.
 	-> for a process which creates sub-processes, we techincally need to check the state and inputs/outputs of all sub-process creations, and recurse if those sub-processes create more sub-processes. This would get increasingly bad the deeper the recursion of sub-processes. 
 * ...

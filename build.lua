@@ -32,7 +32,7 @@ local ExeLinkerFlags="/incremental:no /opt:ref /subsystem:console /libpath:"..De
 local DllCompilerFlags="/MTd /nologo /fp:fast /Gm- /GR- /EHsc /Od /Oi /WX /W4 /wd4201 /FC /Z7 /utf-8 /D_CRT_SECURE_NO_WARNINGS /I"..DetoursIncludePath.." /Fo"..BuildFolder.."\\"
 local DllLinkerFlags="/DLL /incremental:no /opt:ref /subsystem:console /DEF:source\\dllexports.def detours.lib User32.lib Shlwapi.lib"
 	
-local targets = { "exe", "dll", "sample", "depcopysample" }
+local targets = { "exe", "dll", "sample", "copy", "skip" }
 local chosenTargets = {}
 
 local function ShellExecute(command)
@@ -78,8 +78,10 @@ for _,config in ipairs(bitness) do
 			ret = ShellExecute(compiler..' /LD '..DllCompilerFlags.." source\\win32_depdll.cpp /Fe"..BuildFolder.."\\"..ProjectName..bitName..".dll /link "..DllLinkerFlags.." /libpath:"..detoursLibPath)
 		elseif target == "sample" then
 			ret = ShellExecute(compiler..' '..ExeCompilerFlags.." source\\win32_sample.cpp /Fe"..BuildFolder.."\\"..ProjectName.."sample"..bitName..".exe /link "..ExeLinkerFlags.." /machine:"..config)
-		elseif target == "depcopysample" then
+		elseif target == "copy" then
 			ret = ShellExecute(compiler..' '..ExeCompilerFlags.." source\\win32_copysample.cpp /Fe"..BuildFolder.."\\".."depcopysample"..bitName..".exe /link "..ExeLinkerFlags.." /machine:"..config)
+		elseif target == "skip"  and config == "x64" then
+			ret = ShellExecute(compiler..' '..ExeCompilerFlags.." source\\win32_depskip.cpp /Fe"..BuildFolder.."\\".."depskip.exe /link "..ExeLinkerFlags.." /machine:"..config)
 		end
 		if ret ~= 0 then
 			print('\27[31mFailure! stopping\27[0m')

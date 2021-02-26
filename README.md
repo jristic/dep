@@ -1,9 +1,11 @@
-# dep
-(Work in progress)
+# dep (WIP)
 
 Dep is an automatic dependency checking utility for Windows. 
 
 Dep works by having you pass the command you want executed through it, which it creates for you while injecting a DLL into the created process that tracks all files used as input to and output from the process. If the outputs are already up-to-date given the current state of the inputs, Dep skips invoking the command. 
+
+## Status
+Dep is a work in progress and does not yet work as advertised. 
 
 ## Usage
 ```

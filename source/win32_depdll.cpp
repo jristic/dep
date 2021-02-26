@@ -24,11 +24,16 @@ static void DummyDllIdentifier() { return; }
 
 std::string LogFilePath;
 HANDLE LogFileHandle = INVALID_HANDLE_VALUE;
+std::mutex LogFileLock;
 bool DepSuccess = true;
 
 bool DepVerbose;
 bool DepForce;
 
+u32 InterceptedExitCode;
+
+std::string DepExePath;
+std::string DepDllPath;
 std::string DepCachePath;
 std::string DepCommandStatePath;
 std::string WindowsSystemPath;
@@ -48,6 +53,8 @@ void WriteToLog(const char *format, ...)
 {
 	if (DepVerbose)
 	{
+		const std::lock_guard<std::mutex> lock(LogFileLock);
+
 		Assert(LogFileHandle != INVALID_HANDLE_VALUE, "Log file wasn't created yet?");
 		char LogBuffer[2048];
 
@@ -389,14 +396,28 @@ BOOL WINAPI InterceptCreateProcessA(
 {
 	WriteToLog("Intercepting CreateProcessA %s %s \n", lpApplicationName, lpCommandLine);
 
-	// TODO: implement
-	DepSuccess = false;
-	WriteToLog("Dep failure, createprocess not implemented \n");
+	// TODO: get the EXE for the process we're creating
+	std::string exe;
+	if (lpApplicationName)
+	{
+		exe = lpApplicationName;
+	}
+	else
+	{
 
-	return TrueCreateProcessA(
+	}
+
+	// TODO: if that EXE is dep, then remove it and use the first arg on the command line as the exe
+
+
+	BOOL success = TrueCreateProcessA(
 		lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes,
 		bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, 
 		lpStartupInfo, lpProcessInformation);
+	DWORD errorToPreserve = GetLastError();
+
+	SetLastError(errorToPreserve);
+	return success;
 }
 
 BOOL WINAPI InterceptCreateProcessW(
@@ -423,6 +444,13 @@ BOOL WINAPI InterceptCreateProcessW(
 		lpStartupInfo, lpProcessInformation);
 }
 
+void WINAPI InterceptExitProcess(UINT exitCode)
+{
+	WriteToLog("Intercepting ExitProcess %d\n", exitCode);
+	InterceptedExitCode = exitCode;
+	return TrueExitProcess(exitCode);
+}
+
 void DllDetoursAttach()
 {
 	DetourRestoreAfterWith();
@@ -439,6 +467,7 @@ void DllDetoursAttach()
 	DetourAttach(&(PVOID&)TrueLoadLibraryExA, InterceptLoadLibraryExA);
 	DetourAttach(&(PVOID&)TrueCreateProcessA, InterceptCreateProcessA);
 	DetourAttach(&(PVOID&)TrueCreateProcessW, InterceptCreateProcessW);
+	DetourAttach(&(PVOID&)TrueExitProcess, InterceptExitProcess);
 	DetourTransactionCommit();
 }
 
@@ -456,6 +485,7 @@ void DllDetoursDetach()
 	DetourDetach(&(PVOID&)TrueLoadLibraryExA, InterceptLoadLibraryExA);
 	DetourDetach(&(PVOID&)TrueCreateProcessA, InterceptCreateProcessA);
 	DetourDetach(&(PVOID&)TrueCreateProcessW, InterceptCreateProcessW);
+	DetourDetach(&(PVOID&)TrueExitProcess, InterceptExitProcess);
 	DetourTransactionCommit();
 }
 
@@ -475,8 +505,8 @@ BOOL WINAPI DllMain(
 	if (fdwReason == DLL_PROCESS_ATTACH)
 	{
 		// For debugging
-		//while( !::IsDebuggerPresent() )
-		//	::Sleep( 100 ); // to avoid 100% CPU load
+		// while( !::IsDebuggerPresent() )
+		// 	::Sleep( 100 ); // to avoid 100% CPU load
 		
 		HMODULE hm = NULL;
 		if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | 
@@ -487,12 +517,14 @@ BOOL WINAPI DllMain(
 			Assert(false, "GetModuleHandle failed, error = %d\n", ret);
 		}
 
-		std::string DllPath = GetLibraryPath(hm);
+		DepDllPath = GetLibraryPath(hm);
 
-		size_t dllPos = DllPath.rfind(DepDllName);
+		size_t dllPos = DepDllPath.rfind(DepDllName);
 		Assert(dllPos != std::string::npos, "Could not find dll name in string %s",
-			DllPath.c_str());
-		std::string DirectoryPath = DllPath.substr(0, dllPos);
+			DepDllPath.c_str());
+		std::string DirectoryPath = DepDllPath.substr(0, dllPos);
+
+		DepExePath = DirectoryPath + DepExeName;
 
 		DepCachePath = DirectoryPath + "depcache\\";
 
@@ -507,7 +539,8 @@ BOOL WINAPI DllMain(
 			if (!payload)
 				continue;
 			uint32_t flags;
-			Assert(payloadSize == sizeof(flags) + 32, "Invalid payload, size = %d", payloadSize);
+			Assert(payloadSize == sizeof(flags) + 32, "Invalid payload, size = %d", 
+				payloadSize);
 			flags = *((uint32_t*)payload);
 			DepVerbose = (flags & 1) != 0;
 			DepForce = (flags & 2) != 0;
@@ -547,7 +580,7 @@ BOOL WINAPI DllMain(
 		}
 
 		LPSTR commandLine = GetCommandLine();
-		WriteToLog("Invocation: Dll=%s commandLine=%s \n", DllPath.c_str(), commandLine);
+		WriteToLog("Invocation: Dll=%s commandLine=%s \n", DepDllPath.c_str(), commandLine);
 
 
 		DepCommandStatePath = DepCachePath + commandStateHash + "\\";
@@ -573,7 +606,7 @@ BOOL WINAPI DllMain(
 		DllDetoursDetach();
 
 		// Write out .dep file containing results for given inputs
-		if (DepSuccess)
+		if (DepSuccess && InterceptedExitCode == 0)
 		{
 			std::string depCachePath = DepCommandStatePath + "latest.dep";
 			HANDLE depCacheFile = fileio::CreateFileOverwrite(depCachePath.c_str(), 
@@ -624,6 +657,11 @@ BOOL WINAPI DllMain(
 			}
 
 			CloseHandle(depCacheFile);
+		}
+		else if (InterceptedExitCode != 0)
+		{
+			WriteToLog("Intercepted process returned fail code, %d. No cache "
+				"file will be saved.\n", InterceptedExitCode);
 		}
 		else
 		{

@@ -193,11 +193,8 @@ int CDECL main(int argc, char **argv)
 
 		VerbosePrint("dep.exe: Process exited with return value %d\n", dwResult);
 
-		// If the process returned a failure exit code, delete the cache file as it is invalid.
-		if (dwResult != 0)
-		{
-			fileio::DeleteFile(depCacheFilePath.c_str());
-		}
+		CloseHandle(pi.hProcess);
+		CloseHandle(pi.hThread);
 
 		return dwResult;
 	}

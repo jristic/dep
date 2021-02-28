@@ -52,7 +52,7 @@ const GUID GuidDep = {
     {0x94, 0x15, 0x19, 0x0e, 0x79, 0xe8, 0x93, 0x52}
 };
 
-const uint32_t DepCacheVersion = 1;
+const uint32_t DepCacheVersion = 2;
 
 const char* DepExeName = "dep.exe";
 #if defined(_WIN64)

@@ -45,7 +45,7 @@ int main(int argc, char* argv[])
 	// Start the child processes. 
 	{
 		if( !CreateProcess( NULL,   // No module name (use command line)
-			"built\\depcopysample64 output.txt output64.txt", // Command line
+			"built\\depcopy64 output.txt output64.txt", // Command line
 			NULL,           // Process handle not inheritable
 			NULL,           // Thread handle not inheritable
 			FALSE,          // Set handle inheritance to FALSE
@@ -73,7 +73,7 @@ int main(int argc, char* argv[])
 	}
 	{
 		if( !CreateProcess( NULL,   // No module name (use command line)
-			"built\\depcopysample32 output.txt output32.txt", // Command line
+			"built\\depcopy32 output.txt output32.txt", // Command line
 			NULL,           // Process handle not inheritable
 			NULL,           // Thread handle not inheritable
 			FALSE,          // Set handle inheritance to FALSE

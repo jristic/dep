@@ -75,11 +75,11 @@ for _,config in ipairs(bitness) do
 		if target == "exe" and config == "x64" then
 			ret = ShellExecute(compiler..' '..ExeCompilerFlags.." source\\win32_main.cpp /Fe"..BuildFolder.."\\"..ProjectExe.." /link "..ExeLinkerFlags .. " /machine:"..config)
 		elseif target == "dll" then
-			ret = ShellExecute(compiler..' /LD '..DllCompilerFlags.." source\\win32_depdll.cpp /Fe"..BuildFolder.."\\"..ProjectName..bitName..".dll /link "..DllLinkerFlags.." /libpath:"..detoursLibPath)
+			ret = ShellExecute(compiler..' /LDd '..DllCompilerFlags.." source\\win32_depdll.cpp /Fe"..BuildFolder.."\\"..ProjectName..bitName..".dll /link "..DllLinkerFlags.." /libpath:"..detoursLibPath)
 		elseif target == "sample" then
 			ret = ShellExecute(compiler..' '..ExeCompilerFlags.." source\\win32_sample.cpp /Fe"..BuildFolder.."\\"..ProjectName.."sample"..bitName..".exe /link "..ExeLinkerFlags.." /machine:"..config)
 		elseif target == "copy" then
-			ret = ShellExecute(compiler..' '..ExeCompilerFlags.." source\\win32_copysample.cpp /Fe"..BuildFolder.."\\".."depcopysample"..bitName..".exe /link "..ExeLinkerFlags.." /machine:"..config)
+			ret = ShellExecute(compiler..' '..ExeCompilerFlags.." source\\win32_copysample.cpp /Fe"..BuildFolder.."\\".."depcopy"..bitName..".exe /link "..ExeLinkerFlags.." /machine:"..config)
 		elseif target == "skip"  and config == "x64" then
 			ret = ShellExecute(compiler..' '..ExeCompilerFlags.." source\\win32_depskip.cpp /Fe"..BuildFolder.."\\".."depskip.exe /link "..ExeLinkerFlags.." /machine:"..config)
 		end

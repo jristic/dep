@@ -1,6 +1,5 @@
 * Handle subprocess creation
 	-> Check if subprocess creation is trying to launch via dep as well. If so, do not attempt to intercept.
-	-> for a process which creates sub-processes, we techincally need to check the state and inputs/outputs of all sub-process creations, and recurse if those sub-processes create more sub-processes. This would get increasingly bad the deeper the recursion of sub-processes. 
 * ...
 * Profit?
 
@@ -18,6 +17,7 @@ Optimizations:
 * Set up optimized/debug configs. 
 * Need to set up measurements on how much time the overhead for dep is consuming. 
 * Currently dep.exe has to compute input hashes, then if not skipped the dll does it again. This could be collapsed into one, since the input hashes need to be computed up-front anyway. Detours CopyPayload may be a path to doing this?
+* For a process which creates sub-processes, we techincally need to check the state and inputs/outputs of all sub-process creations, and recurse if those sub-processes create more sub-processes. This would get increasingly bad the deeper the recursion of sub-processes. 
 
 
 Potential next steps:

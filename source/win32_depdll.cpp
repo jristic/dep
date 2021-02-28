@@ -48,6 +48,9 @@ std::set<std::string> DepLibraries;
 std::mutex DepOutputLock;
 std::set<std::string> DepOutputs;
 
+std::mutex DepSubProcessLock;
+std::map<std::string, std::string> DepSubProcesses;
+
 #define VerbosePrint(format, ...) if (DepVerbose) { printf(format, __VA_ARGS__); } else {}
 
 thread_local bool Reentrant = false;
@@ -550,6 +553,12 @@ BOOL WINAPI InterceptCreateProcessA(
 
 	std::string depCacheFilePath = subCommandStatePath + "latest.dep";
 
+	{
+		const std::lock_guard<std::mutex> lock(DepSubProcessLock);
+		DepSubProcesses[depCacheFilePath] = fullExePath;
+		WriteToLog("Tracking subprocess with cache %s\n", depCacheFilePath.c_str());
+	}
+
 	bool ExecuteProcess = false;
 
 	if (!DepForce)
@@ -719,6 +728,15 @@ BOOL WINAPI InterceptCreateProcessW(
 	fileio::MakeDirectory(subCommandStatePath.c_str());
 
 	std::string depCacheFilePath = subCommandStatePath + "latest.dep";
+
+	{
+		const std::lock_guard<std::mutex> lock(DepSubProcessLock);
+		std::string convExePath;
+		ConvertWideString(fullExePath.c_str(), convExePath);
+		DepSubProcesses[depCacheFilePath] = convExePath;
+		WriteToLog("Tracking subprocess with cache %s\n", depCacheFilePath.c_str());
+	}
+
 
 	bool ExecuteProcess = false;
 
@@ -990,6 +1008,22 @@ BOOL WINAPI DllMain(
 				cacheformat::WriteFileInfo(depCacheFile, output.c_str(), digest);
 
 				WriteToLog("Dep output %s, hash=%s \n", output.c_str(), hash.c_str());
+			}
+			cacheformat::WriteUint(depCacheFile, (u32)DepSubProcesses.size());
+			for (auto iter : DepSubProcesses)
+			{
+				const char* subDepCachePath = iter.first.c_str();
+				const char* exePath = iter.second.c_str();
+
+				// Save the exe state
+				HANDLE handle = fileio::OpenFileAlways(exePath, GENERIC_READ);
+				md5::Digest digest = deplogic::ComputeFileHash(handle);
+				CloseHandle(handle);
+
+				cacheformat::WriteFileInfo(depCacheFile, exePath, digest);
+				cacheformat::WriteFilePath(depCacheFile, subDepCachePath);
+
+				WriteToLog("Dep subprocess %s, cache %s\n", exePath, subDepCachePath);
 			}
 
 			CloseHandle(depCacheFile);

@@ -72,6 +72,30 @@ void WriteDllPayload(HANDLE process, const char* hash, bool Verbose, bool Force)
 	Assert(success, "Failed to copy payload, error=%d", GetLastError());
 }
 
+bool CheckFileState(std::string& filePath, md5::Digest& prevHash, std::string& outReason)
+{
+	bool CheckPassed = true;
+	HANDLE fileHandle = fileio::OpenFileOptional(filePath.c_str(), GENERIC_READ);
+	if (fileHandle != INVALID_HANDLE_VALUE)
+	{
+		md5::Digest currHash = deplogic::ComputeFileHash(fileHandle);
+		CloseHandle(fileHandle);
+		if (memcmp(currHash.bytes, prevHash.bytes, sizeof(currHash.bytes)) != 0)
+		{
+			CheckPassed = false;
+			outReason = filePath + 
+				" didn't match previous state, rebuild required.";
+		}
+	}
+	else
+	{
+		CheckPassed = false;
+		outReason = "Couldn't find file " + filePath + 
+			", rebuild required.";
+	}
+	return CheckPassed;
+}
+
 bool CheckCacheState(const char* cacheFileName, std::string& outReason)
 {
 	bool CheckPassed = true; 
@@ -79,48 +103,64 @@ bool CheckCacheState(const char* cacheFileName, std::string& outReason)
 	HANDLE depCacheFile = fileio::OpenFileOptional(cacheFileName, GENERIC_READ);
 	if (depCacheFile != INVALID_HANDLE_VALUE)
 	{
-		uint32_t fileSize = fileio::GetFileSize(depCacheFile);
+		u32 fileSize = fileio::GetFileSize(depCacheFile);
 		unsigned char* depCacheContents = (unsigned char*)malloc(fileSize);
 
 		fileio::ReadFile(depCacheFile, depCacheContents, fileSize);
 		CloseHandle(depCacheFile);
 
 		unsigned char* fileReadPtr = depCacheContents;
-		uint32_t version = cacheformat::ReadUint(fileReadPtr);
+		u32 version = cacheformat::ReadUint(fileReadPtr);
 
 		if (version == DepCacheVersion)
 		{
-			uint32_t fileCount = cacheformat::ReadUint(fileReadPtr);
-			for (uint32_t i = 0 ; i < fileCount ; ++i)
+			u32 fileCount = cacheformat::ReadUint(fileReadPtr);
+			for (u32 i = 0 ; i < fileCount ; ++i)
 			{
 				std::string filePath;
 				md5::Digest prevHash = cacheformat::ReadFileInfo(fileReadPtr, filePath);
-				HANDLE fileHandle = fileio::OpenFileOptional(filePath.c_str(), GENERIC_READ);
-				if (fileHandle != INVALID_HANDLE_VALUE)
-				{
-					md5::Digest currHash = deplogic::ComputeFileHash(fileHandle);
-					CloseHandle(fileHandle);
-					if (memcmp(currHash.bytes, prevHash.bytes, sizeof(currHash.bytes)) != 0)
-					{
-						CheckPassed = false;
-						outReason = outReason + filePath + 
-							" didn't match previous state, rebuild required.";
-						break;
-					}
-				}
-				else
+				std::string fileReason;
+				bool filePassed = CheckFileState(filePath, prevHash, fileReason);
+				if (!filePassed)
 				{
 					CheckPassed = false;
-					outReason = outReason + "Couldn't find dependency " + filePath + 
-						", rebuild required.";
+					outReason = fileReason;
 					break;
+				}
+			}
+			if (CheckPassed)
+			{
+				u32 subProcessCount = cacheformat::ReadUint(fileReadPtr);
+				for (u32 i = 0 ; i < subProcessCount ; ++i)
+				{
+					std::string exePath;
+					md5::Digest prevHash = cacheformat::ReadFileInfo(fileReadPtr, exePath);
+					std::string exeReason;
+					bool exePassed = CheckFileState(exePath, prevHash, exeReason);
+					if (!exePassed)
+					{
+						CheckPassed = false;
+						outReason = "Sub-process exe check failed: \n" + exeReason;
+						break;
+					}
+					std::string subCachePath;
+					cacheformat::ReadFilePath(fileReadPtr, subCachePath);
+					std::string subCacheReason;
+					bool subCachePassed = CheckCacheState(subCachePath.c_str(), 
+						subCacheReason);
+					if (!subCachePassed)
+					{
+						CheckPassed = false;
+						outReason = "Sub-process cache check failed: \n" + subCacheReason;
+						break;
+					}
 				}
 			}
 		}
 		else
 		{
 			CheckPassed = false;
-			outReason = outReason + "Dep cache file version out of date, rebuild required.";
+			outReason = "Dep cache file version out of date, rebuild required.";
 		}
 
 		free(depCacheContents);
@@ -129,7 +169,7 @@ bool CheckCacheState(const char* cacheFileName, std::string& outReason)
 	{
 		// No cache file exists, either this command state hasn't been run before
 		//	or it returned an error on the last invocation. 
-		outReason = outReason + "No cached state for current command state, rebuild required.";
+		outReason = "No cached state for current command state, rebuild required.";
 		CheckPassed = false;
 	}
 
